@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.4.0 — 2026-10-09
+
+**No more clicking Save after the agent edits files.**
+
+- The installer turns on auto-save in Antigravity (`files.autoSave: afterDelay`, 1 s). The agent's
+  code changes land in open editor tabs, and until now they waited for a manual Save before your app
+  saw them.
+- Respects an auto-save mode you've already chosen; uninstall turns it back off only if the installer
+  turned it on. Skip with `--no-autosave`.
+
 ## v1.3.0 — 2026-10-09
 
 **Antigravity reports back, and Claude can wait for it.**

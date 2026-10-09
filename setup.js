@@ -6,6 +6,7 @@
  *   node setup.js --uninstall     remove everything
  *   node setup.js --no-restart    don't close/reopen Antigravity and Claude
  *   node setup.js --dry-run       show what would change, change nothing
+ *   node setup.js --no-autosave   leave Antigravity's auto-save setting alone
  *
  * No npm install needed: the server ships pre-bundled in server/dist.
  * Every config file is backed up once as <file>.bak-agent-bridge before the first edit.
@@ -20,6 +21,7 @@ const args = new Set(process.argv.slice(2));
 const UNINSTALL = args.has("--uninstall");
 const DRY = args.has("--dry-run");
 const RESTART = !args.has("--no-restart") && !DRY;
+const AUTOSAVE = !args.has("--no-autosave");
 const WIN = process.platform === "win32";
 const MAC = process.platform === "darwin";
 
@@ -296,6 +298,51 @@ Claude Code may be working on this machine at the same time. You are connected t
   }
 }
 
+
+/** Antigravity's editor settings.json files (one per installed edition). */
+function antigravityUserSettings() {
+  const bases = WIN ? [appData] : MAC ? [path.join(HOME, "Library", "Application Support")] : [path.join(HOME, ".config")];
+  const out = [];
+  for (const b of bases) for (const name of ["Antigravity IDE", "Antigravity"]) {
+    const dir = path.join(b, name, "User");
+    if (exists(dir)) out.push(path.join(dir, "settings.json"));
+  }
+  return out;
+}
+
+/** Agent edits land in open editor tabs; without auto-save they wait for a manual Save.
+ *  Turn on auto-save (1s) unless the user already chose a mode. Remembered so uninstall can undo it. */
+function autoSave() {
+  if (!AUTOSAVE && !UNINSTALL) return;
+  const files = antigravityUserSettings();
+  if (!files.length) return;
+  const stateFile = path.join(BUS, "installer-state.json");
+  const state = readJson(stateFile);
+  state.autoSaveSetBy = state.autoSaveSetBy || [];
+  step("Antigravity auto-save");
+  for (const f of files) {
+    const j = readJson(f);
+    if (UNINSTALL) {
+      if (state.autoSaveSetBy.includes(f) && j["files.autoSave"] === "afterDelay") {
+        delete j["files.autoSave"];
+        delete j["files.autoSaveDelay"];
+        writeJson(f, j);
+        ok(`Turned auto-save back off in ${short(f)}`);
+      }
+      continue;
+    }
+    const cur = j["files.autoSave"];
+    if (cur && cur !== "off") { info(`Auto-save already "${cur}" in ${short(f)}; left as is`); continue; }
+    j["files.autoSave"] = "afterDelay";
+    if (j["files.autoSaveDelay"] === undefined) j["files.autoSaveDelay"] = 1000;
+    writeJson(f, j);
+    if (!state.autoSaveSetBy.includes(f)) state.autoSaveSetBy.push(f);
+    ok(`Turned on auto-save in ${short(f)} so agent edits are saved without clicking Save`);
+  }
+  if (UNINSTALL) state.autoSaveSetBy = [];
+  if (!DRY && exists(BUS)) fs.writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n");
+}
+
 // ---------------------------------------------------------------- restart apps (Windows)
 const PS_FIND = {
   antigravity: `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match '\\\\Antigravity[^\\\\]*\\\\[^\\\\]*antigravity[^\\\\]*\\.exe$' } | Select-Object -ExpandProperty ExecutablePath -Unique`,
@@ -364,6 +411,7 @@ function restartApps() {
     claudeCode();
     claudeDesktop();
     antigravity();
+    autoSave();
     agentRules();
     restartApps();
     console.log(UNINSTALL

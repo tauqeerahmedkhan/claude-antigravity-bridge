@@ -34,6 +34,7 @@ That's it. The installer:
 - removes any older install of the bridge, including a manually installed extension
 - connects **Claude Code** (CLI and the Claude desktop app) to the bridge and adds a live-update hook
 - connects **Antigravity's agent** to the bridge and installs the Antigravity extension
+- turns on **auto-save** in Antigravity, so the agent's code changes are saved (and your app reloads) without you clicking Save
 - adds a short "you're working alongside the other agent" note to your global `CLAUDE.md` and `GEMINI.md`
 - closes and reopens Antigravity and the Claude desktop app so they load it
 
@@ -65,6 +66,7 @@ On macOS and Linux the installer doesn't restart apps; quit and reopen Antigravi
 |---|---|
 | `--no-restart` | Don't close or reopen Antigravity and Claude |
 | `--dry-run` | Show what would change without changing anything |
+| `--no-autosave` | Don't turn on Antigravity's auto-save |
 | `--uninstall` | Remove everything the installer added |
 
 On Windows you can pass these to the batch file, e.g. `Install.bat --no-restart`.
@@ -175,6 +177,7 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 |---|---|
 | `agent-bridge` not in `/mcp` | Run `Install.bat` again, then fully quit Claude (tray icon → Quit) and reopen it |
 | Claude sees old Antigravity data | Check `lastActivity` in `get_antigravity_progress`; if it's stale, run `Install.bat` again to update the bridge |
+| Agent's edits wait for you to click **Save** | Auto-save is off. Run `Install.bat` again, or in Antigravity set **File → Auto Save** on. The installer leaves your own auto-save choice alone if you'd already picked one |
 | "Antigravity didn't close" | Save your files, close Antigravity, run `Install.bat` again |
 | Claude's message didn't appear in the agent chat | Run *Agent Bridge: Show log* in Antigravity. If it says auto-send is unavailable, your Antigravity version doesn't have the send command; paste from the clipboard instead |
 | Extension not showing in Antigravity | Restart Antigravity. Manual fallback: build the `.vsix` (below), then Extensions → `…` → **Install from VSIX** |
