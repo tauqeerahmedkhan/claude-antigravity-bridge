@@ -206,8 +206,15 @@ function antigravity() {
   const profiles = antigravityProfiles();
   step("Antigravity");
   if (!profiles.length) return warn("Antigravity not found (no ~/.gemini/antigravity* folder). Skipped — run again after installing it.");
+  // Current Antigravity builds load agent connectors from ~/.gemini/config/mcp_config.json
+  const sharedCfgDir = path.join(HOME, ".gemini", "config");
+  if (exists(sharedCfgDir)) {
+    const mf = path.join(sharedCfgDir, "mcp_config.json");
+    const entry = UNINSTALL ? null : { command: NODE, args: [SERVER], env: { BRIDGE_AGENT: "antigravity" } };
+    if ((exists(mf) || !UNINSTALL) && setMcp(mf, entry)) ok(`${UNINSTALL ? "Removed MCP server from" : "Registered MCP server in"} ${short(mf)}`);
+  }
   for (const p of profiles) {
-    // MCP server for Antigravity's agent
+    // MCP server for Antigravity's agent (older builds read it from the profile folder)
     if (exists(p.dataDir) || !UNINSTALL) {
       const mf = path.join(p.dataDir, "mcp_config.json");
       const entry = UNINSTALL ? null : { command: NODE, args: [SERVER], env: { BRIDGE_AGENT: "antigravity" } };
@@ -282,6 +289,7 @@ Google Antigravity's agent may be working on this machine at the same time. You 
 `## Working alongside Claude Code (agent-bridge)
 Claude Code may be working on this machine at the same time. You are connected to it through the agent-bridge MCP tools.
 - At the start of each task and before editing shared files, call read_messages.
+- Use ONLY the agent-bridge MCP tools to talk to Claude. Never read or write the ~/.agent-bridge files directly; if the tools aren't available, tell the user.
 - Tasks from Claude arrive as "[Task from Claude Code via agent-bridge] Task ID: …". When you finish one (or get blocked), ALWAYS call send_message with type "result", reply_to set to that Task ID, and a short report: what you did, files changed, build/test results, anything left.
 - When you need Claude to do something, call send_message with type "message".`,
   };

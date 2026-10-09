@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.1 — 2026-10-09
+
+**Fixes: Antigravity's replies never reached Claude, and Claude sometimes had to send twice.**
+
+- Current Antigravity builds load agent connectors from `~/.gemini/config/mcp_config.json`. The
+  installer now registers the bridge there, so Antigravity's agent actually gets the bridge tools.
+  Without them it had been writing replies into the log by hand.
+- Hand-written log lines (several messages joined with a literal `\n`, no final newline) were
+  silently dropped, and the next real message got glued onto them and lost too. The bridge now
+  recovers glued messages and always starts a new message on a fresh line.
+- `reply_to` written by hand is recognised as `replyTo`.
+- Task prompts and `GEMINI.md` now tell the agent to use only the bridge tools, and to say so if
+  they're missing, instead of editing the files itself.
+
 ## v1.0.0 — 2026-10-09
 
 **First public release.** Claude Code and Google Antigravity's agent, working as a team.

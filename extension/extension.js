@@ -21,16 +21,39 @@ const ME = "antigravity";
 // ---------- bus (same file format as bridge-mcp/store.js) ----------
 function post(text, type = "progress", meta) {
   fs.mkdirSync(BRIDGE_DIR, { recursive: true });
+  let lead = "";
+  try {
+    const st = fs.statSync(LOG_FILE);
+    if (st.size > 0) {
+      const fd = fs.openSync(LOG_FILE, "r"), b = Buffer.alloc(1);
+      fs.readSync(fd, b, 0, 1, st.size - 1); fs.closeSync(fd);
+      if (b[0] !== 0x0a) lead = "\n";
+    }
+  } catch {}
   const msg = { id: crypto.randomUUID(), ts: new Date().toISOString(), from: ME, to: "claude", type, text };
   if (meta) msg.meta = meta;
-  fs.appendFileSync(LOG_FILE, JSON.stringify(msg) + "\n", "utf8");
+  fs.appendFileSync(LOG_FILE, lead + JSON.stringify(msg) + "\n", "utf8");
   return msg;
 }
 function readAll() {
-  try {
-    return fs.readFileSync(LOG_FILE, "utf8").split(/\r?\n/).filter(Boolean)
-      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  } catch { return []; }
+  let raw;
+  try { raw = fs.readFileSync(LOG_FILE, "utf8"); } catch { return []; }
+  const out = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    try { out.push(JSON.parse(s)); continue; } catch {}
+    // recover several objects glued onto one line
+    let depth = 0, start = -1, inStr = false, esc = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true;
+      else if (c === "{") { if (depth++ === 0) start = i; }
+      else if (c === "}" && depth > 0 && --depth === 0) { try { out.push(JSON.parse(s.slice(start, i + 1))); } catch {} }
+    }
+  }
+  return out.filter((m) => m && m.from);
 }
 function readCursor() {
   try { return JSON.parse(fs.readFileSync(UI_CURSOR, "utf8")).index; } catch { return undefined; }
@@ -205,6 +228,8 @@ function activate(context) {
       `  type: "result"${taskId ? `, reply_to: "${taskId}"` : ""}`,
       "  text: a short report: what you did, files changed, build/test results, anything left or blocked.",
       "Claude Code is waiting for this report, so do not skip it, even if the task failed.",
+      "Only use the agent-bridge send_message tool for this; never write to the ~/.agent-bridge files yourself.",
+      "If the agent-bridge tools are not available to you, say so in this chat instead.",
     ].join("\n");
   }
   const queue = [];

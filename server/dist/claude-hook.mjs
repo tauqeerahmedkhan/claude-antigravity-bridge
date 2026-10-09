@@ -20,15 +20,54 @@ function readAll() {
     if (e.code === "ENOENT") return [];
     throw e;
   }
+  return parseLog(raw);
+}
+function parseLog(raw) {
   const out = [];
   for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim()) continue;
+    const s = line.trim();
+    if (!s) continue;
     try {
-      out.push(JSON.parse(line));
+      out.push(normalize(JSON.parse(s)));
+      continue;
     } catch {
     }
+    for (const obj of splitObjects(s)) out.push(normalize(obj));
   }
-  return out;
+  return out.filter((m) => m && m.from && m.text !== void 0);
+}
+function normalize(m) {
+  if (m && m.reply_to && !m.replyTo) m.replyTo = m.reply_to;
+  if (m) {
+    delete m.reply_to;
+    if (!m.ts) m.ts = (/* @__PURE__ */ new Date(0)).toISOString();
+    if (!m.type) m.type = "message";
+    if (!m.to) m.to = "all";
+  }
+  return m;
+}
+function splitObjects(s) {
+  const objs = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") {
+      if (depth++ === 0) start = i;
+    } else if (c === "}" && depth > 0 && --depth === 0) {
+      try {
+        objs.push(JSON.parse(s.slice(start, i + 1)));
+      } catch {
+      }
+    }
+  }
+  return objs;
 }
 function cursorFile(name) {
   return path.join(BRIDGE_DIR, `cursor-${name}.json`);

@@ -9,7 +9,7 @@ import * as store from "./store.js";
 const ME = (process.env.BRIDGE_AGENT || "claude").toLowerCase();
 const PEER = ME === "claude" ? "antigravity" : "claude";
 
-const server = new McpServer({ name: "agent-bridge", version: "1.0.0" });
+const server = new McpServer({ name: "agent-bridge", version: "1.0.1" });
 
 const text = (obj) => ({
   content: [

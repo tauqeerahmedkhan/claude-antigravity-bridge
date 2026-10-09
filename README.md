@@ -149,7 +149,7 @@ reports; `reply_to` defaults to Claude's latest task) and `read_messages`.
 
 | Antigravity version | Agent data | Extensions |
 |---|---|---|
-| Current (2026) | `~/.gemini/antigravity-ide/` | `~/.antigravity-ide/extensions/` |
+| Current (2026) | `~/.gemini/antigravity-ide/` (connectors: `~/.gemini/config/mcp_config.json`) | `~/.antigravity-ide/extensions/` |
 | Older | `~/.gemini/antigravity/` | `~/.antigravity/extensions/` |
 
 The bridge reads both and always uses the most recently active conversation. Current builds
@@ -176,6 +176,7 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 
 | Problem | Fix |
 |---|---|
+| Antigravity says it replied, but Claude never gets it | Antigravity's agent doesn't have the bridge tools. Run `Install.bat` again (it registers them in `~/.gemini/config/mcp_config.json`), restart Antigravity, and check **Agent panel → … → MCP Servers** lists `agent-bridge` |
 | `agent-bridge` not in `/mcp` | Run `Install.bat` again, then fully quit Claude (tray icon → Quit) and reopen it |
 | Claude sees old Antigravity data | Check `lastActivity` in `get_antigravity_progress`; if it's stale, run `Install.bat` again to update the bridge |
 | Agent's edits wait for you to click **Save** | Auto-save is off. Run `Install.bat` again, or in Antigravity set **File → Auto Save** on. The installer leaves your own auto-save choice alone if you'd already picked one |

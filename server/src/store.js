@@ -23,6 +23,18 @@ function ensureDir() {
 export function post({ from, to = "all", type = "message", text, meta, replyTo }) {
   if (!text || !String(text).trim()) throw new Error("text is required");
   ensureDir();
+  // If something else left the file without a trailing newline, don't glue onto its last line.
+  let lead = "";
+  try {
+    const fd = fs.openSync(LOG_FILE, "r");
+    const { size } = fs.fstatSync(fd);
+    if (size > 0) {
+      const b = Buffer.alloc(1);
+      fs.readSync(fd, b, 0, 1, size - 1);
+      if (b[0] !== 0x0a) lead = "\n";
+    }
+    fs.closeSync(fd);
+  } catch {}
   const msg = {
     id: crypto.randomUUID(),
     ts: new Date().toISOString(),
@@ -33,7 +45,7 @@ export function post({ from, to = "all", type = "message", text, meta, replyTo }
     ...(replyTo ? { replyTo } : {}),
     ...(meta ? { meta } : {}),
   };
-  fs.appendFileSync(LOG_FILE, JSON.stringify(msg) + "\n", "utf8");
+  fs.appendFileSync(LOG_FILE, lead + JSON.stringify(msg) + "\n", "utf8");
   return msg;
 }
 
@@ -45,16 +57,57 @@ export function readAll() {
     if (e.code === "ENOENT") return [];
     throw e;
   }
+  return parseLog(raw);
+}
+
+/**
+ * Parse the log tolerantly: one object per line normally, but also recover lines
+ * where several objects were glued together (e.g. written by hand with a literal "\n").
+ */
+export function parseLog(raw) {
   const out = [];
   for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim()) continue;
+    const s = line.trim();
+    if (!s) continue;
     try {
-      out.push(JSON.parse(line));
-    } catch {
-      /* skip a half-written line */
+      out.push(normalize(JSON.parse(s)));
+      continue;
+    } catch {}
+    for (const obj of splitObjects(s)) out.push(normalize(obj));
+  }
+  return out.filter((m) => m && m.from && m.text !== undefined);
+}
+
+function normalize(m) {
+  if (m && m.reply_to && !m.replyTo) m.replyTo = m.reply_to;
+  if (m) {
+    delete m.reply_to;
+    if (!m.ts) m.ts = new Date(0).toISOString();
+    if (!m.type) m.type = "message";
+    if (!m.to) m.to = "all";
+  }
+  return m;
+}
+
+/** Pull every complete top-level {...} object out of a string. */
+function splitObjects(s) {
+  const objs = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") { if (depth++ === 0) start = i; }
+    else if (c === "}" && depth > 0 && --depth === 0) {
+      try { objs.push(JSON.parse(s.slice(start, i + 1))); } catch {}
     }
   }
-  return out;
+  return objs;
 }
 
 function cursorFile(name) {

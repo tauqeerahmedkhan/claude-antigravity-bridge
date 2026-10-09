@@ -110,6 +110,21 @@ w = JSON.parse(await call(claude, "wait_for_antigravity", { timeout_seconds: 5, 
 console.log("wait (nothing)  ->", w.status);
 assert.equal(w.status, "no_activity");
 
+// ---- regression: agent hand-wrote two results joined by a literal "\n", no trailing newline ----
+const bus = path.join(sandbox, "bus", "messages.jsonl");
+const handA = JSON.stringify({ id: "h1", ts: new Date().toISOString(), from: "antigravity", to: "claude", type: "result", reply_to: "t-1", text: "Fix A done" });
+const handB = JSON.stringify({ id: "h2", ts: new Date().toISOString(), from: "antigravity", to: "claude", type: "result", reply_to: "t-2", text: "Fix B done" });
+fs.appendFileSync(bus, handA + "\\n" + handB); // exactly what PowerShell produced on the user's PC
+sent = await call(claude, "send_message", { text: "Next task after the hand-written lines" });
+const after = fs.readFileSync(bus, "utf8").split("\n").filter(Boolean);
+assert.ok(after.at(-1).includes("Next task after"), "Claude's message must start on its own line");
+got = await call(claude, "read_messages");
+console.log("recovered       ->", got.split("\n").map((l) => l.slice(11, 70)));
+assert.match(got, /Fix A done/);
+assert.match(got, /Fix B done/);
+const agSees = await call(ag, "read_messages");
+assert.match(agSees, /Next task after the hand-written lines/);
+
 await claude.close();
 await ag.close();
 fs.rmSync(sandbox, { recursive: true, force: true });
