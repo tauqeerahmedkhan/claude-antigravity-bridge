@@ -56,7 +56,7 @@ function activate(context) {
   const log = (s) => out.appendLine(`[${new Date().toLocaleTimeString()}] ${s}`);
   context.subscriptions.push(out);
 
-  // Status bar
+  // Status bar (click: message Claude)
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   bar.command = "agentBridge.sendToClaude";
   let unreadCount = 0;
@@ -179,6 +179,61 @@ function activate(context) {
   }
   startBrainWatch();
 
+  // ----- deliver Claude's messages straight into the Antigravity agent chat -----
+  // Antigravity's own (hidden) command: opens the agent panel and sends the text as a chat
+  // message — same path its interactive previews use to prompt the agent.
+  const SEND_CMD = "antigravity.sendPromptToAgentPanel";
+  let sendCmdAvailable;
+  async function hasSendCommand() {
+    if (sendCmdAvailable === undefined) {
+      try { sendCmdAvailable = (await vscode.commands.getCommands(false)).includes(SEND_CMD); }
+      catch { sendCmdAvailable = false; }
+      log(sendCmdAvailable ? "Agent auto-send available" : `Agent auto-send unavailable (${SEND_CMD} not found); falling back to clipboard`);
+    }
+    return sendCmdAvailable;
+  }
+  const queue = [];
+  let sending = false;
+  function enqueueForAgent(text) {
+    queue.push(text);
+    if (!sending) drainQueue();
+  }
+  async function drainQueue() {
+    sending = true;
+    while (queue.length) {
+      const text = queue.shift();
+      const prompt = `[Message from Claude Code via agent-bridge]\n${text}\n\n` +
+        `(If you need to answer Claude, use the agent-bridge send_message tool.)`;
+      const short = text.length > 80 ? text.slice(0, 77) + "…" : text;
+      let delivered = false;
+      if (await hasSendCommand()) {
+        try {
+          await vscode.commands.executeCommand(SEND_CMD, prompt);
+          delivered = true;
+        } catch (e) {
+          log(`auto-send failed: ${e?.message || e}`);
+        }
+      }
+      if (delivered) {
+        log(`→ agent: ${short}`);
+        post(`📨 Delivered to the Antigravity agent: "${short}"`, "progress");
+        if (cfg().get("notifications", true)) {
+          vscode.window.setStatusBarMessage(`$(comment-discussion) Sent Claude's message to the agent`, 5000);
+        }
+      } else {
+        await vscode.env.clipboard.writeText(prompt);
+        unreadCount++;
+        renderBar();
+        vscode.window.showWarningMessage(
+          `Couldn't send Claude's message to the agent automatically, so it's on your clipboard — paste it into the agent chat (Ctrl+V). "${short}"`,
+          "Open agent chat"
+        ).then((c) => { if (c) vscode.commands.executeCommand("antigravity.toggleChatFocus"); });
+      }
+      await new Promise((r) => setTimeout(r, 1500)); // let the panel settle between messages
+    }
+    sending = false;
+  }
+
   // ----- watch messages from Claude -----
   if (readCursor() === undefined) writeCursor(readAll().length); // don't replay history on first run
   function checkInbox() {
@@ -191,17 +246,17 @@ function activate(context) {
       lastClaude = m;
       log(`← ${m.from}: ${m.text}`);
       if (m.type === "progress") continue; // log only, no popup
+      if (cfg().get("autoSendToAgent", true)) {
+        enqueueForAgent(m.text);
+        continue;
+      }
       unreadCount++;
       if (cfg().get("notifications", true)) {
         vscode.window
-          .showInformationMessage(`Claude: ${m.text}`, "Copy for agent", "Reply")
+          .showInformationMessage(`Claude: ${m.text}`, "Send to agent", "Reply")
           .then((choice) => {
-            if (choice === "Copy for agent") {
-              vscode.env.clipboard.writeText(`Message from Claude Code: ${m.text}`);
-              vscode.window.setStatusBarMessage("Copied — paste it into the Antigravity agent", 4000);
-            } else if (choice === "Reply") {
-              vscode.commands.executeCommand("agentBridge.sendToClaude");
-            }
+            if (choice === "Send to agent") enqueueForAgent(m.text);
+            else if (choice === "Reply") vscode.commands.executeCommand("agentBridge.sendToClaude");
           });
       }
     }
@@ -230,6 +285,12 @@ function activate(context) {
       unreadCount = 0;
       renderBar();
       out.show(true);
+    }),
+    vscode.commands.registerCommand("agentBridge.sendLastToAgent", () => {
+      if (!lastClaude) return vscode.window.showInformationMessage("No messages from Claude yet.");
+      unreadCount = 0;
+      renderBar();
+      enqueueForAgent(lastClaude.text);
     }),
     vscode.commands.registerCommand("agentBridge.copyLastFromClaude", () => {
       if (!lastClaude) return vscode.window.showInformationMessage("No messages from Claude yet.");

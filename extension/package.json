@@ -1,21 +1,46 @@
 {
   "name": "agent-bridge-antigravity",
   "displayName": "Agent Bridge (Claude Code ↔ Antigravity)",
-  "description": "Streams Antigravity agent progress to Claude Code and shows Claude's messages in Antigravity.",
-  "version": "1.1.0",
+  "description": "Streams Antigravity agent progress to Claude Code and delivers Claude Code's messages straight into the Antigravity agent chat.",
+  "version": "1.2.0",
   "publisher": "tauqe",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://example.invalid/agent-bridge" },
-  "engines": { "vscode": "^1.80.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "repository": {
+    "type": "git",
+    "url": "https://example.invalid/agent-bridge"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
-      { "command": "agentBridge.sendToClaude", "title": "Agent Bridge: Send message to Claude Code" },
-      { "command": "agentBridge.copyLastFromClaude", "title": "Agent Bridge: Copy last Claude message (to paste into agent)" },
-      { "command": "agentBridge.showLog", "title": "Agent Bridge: Show log" },
-      { "command": "agentBridge.reportNow", "title": "Agent Bridge: Ping Claude Code" }
+      {
+        "command": "agentBridge.sendToClaude",
+        "title": "Agent Bridge: Send message to Claude Code"
+      },
+      {
+        "command": "agentBridge.sendLastToAgent",
+        "title": "Agent Bridge: Send last Claude message to the agent"
+      },
+      {
+        "command": "agentBridge.copyLastFromClaude",
+        "title": "Agent Bridge: Copy last Claude message (to paste into agent)"
+      },
+      {
+        "command": "agentBridge.showLog",
+        "title": "Agent Bridge: Show log"
+      },
+      {
+        "command": "agentBridge.reportNow",
+        "title": "Agent Bridge: Ping Claude Code"
+      }
     ],
     "configuration": {
       "title": "Agent Bridge",
@@ -28,7 +53,12 @@
         "agentBridge.notifications": {
           "type": "boolean",
           "default": true,
-          "description": "Show a popup when Claude Code sends a message."
+          "description": "Show notifications for bridge activity."
+        },
+        "agentBridge.autoSendToAgent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send messages from Claude Code straight into the Antigravity agent chat and submit them automatically. Turn off to get a popup with a 'Send to agent' button instead."
         }
       }
     }

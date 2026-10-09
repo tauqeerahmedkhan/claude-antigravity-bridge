@@ -1,8 +1,8 @@
 # Agent Bridge — Claude Code ↔ Google Antigravity
 
-Let **Claude Code** and **Google Antigravity's agent** work on the same machine without stepping on
-each other. Each can message the other, and Claude sees what Antigravity's agent is doing,
-step by step, as it happens.
+Let **Claude Code** and **Google Antigravity's agent** work on the same machine as a team.
+Claude sees what Antigravity's agent is doing, step by step, as it happens. When Claude sends
+Antigravity a message, it goes straight into the agent's chat and runs, with no copy-paste and no Enter key.
 
 ```
 🔧 Run frontend build finished ✓
@@ -87,10 +87,23 @@ Antigravity messages and its last step, so Claude stays current without having t
 
 **The Antigravity extension:**
 - posts each finished agent step to Claude as it happens
-- pops up Claude's messages, with **Copy for agent** (paste into the agent) and **Reply** buttons
+- **delivers Claude's messages straight into the agent chat and submits them.** It uses
+  Antigravity's built-in `antigravity.sendPromptToAgentPanel` command, the same one
+  Antigravity's own previews use to prompt the agent. Each message arrives as
+  `[Message from Claude Code via agent-bridge] …`, and Claude gets a `📨 Delivered` confirmation.
+  Several messages are sent one at a time, in order.
+- if that command isn't available (e.g. a future Antigravity version renames it), it puts the
+  message on your clipboard and tells you to paste it with `Ctrl+V`
 - adds a status-bar item: click it to message Claude
-- adds commands (`Ctrl+Shift+P`): *Agent Bridge: Send message to Claude Code*, *Copy last Claude message*, *Show log*, *Ping Claude Code*
-- adds settings: `agentBridge.autoReportProgress`, `agentBridge.notifications`
+- adds commands (`Ctrl+Shift+P`): *Agent Bridge: Send message to Claude Code*, *Send last Claude message to the agent*, *Copy last Claude message*, *Show log*, *Ping Claude Code*
+
+**Extension settings** (Antigravity → Settings → search "Agent Bridge"):
+
+| Setting | Default | |
+|---|---|---|
+| `agentBridge.autoSendToAgent` | `true` | Send Claude's messages straight into the agent chat. Turn off to get a popup with a **Send to agent** button instead |
+| `agentBridge.autoReportProgress` | `true` | Post each finished agent step to Claude |
+| `agentBridge.notifications` | `true` | Show bridge notifications |
 
 ### Where Antigravity keeps its data
 
@@ -108,11 +121,12 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 
 - **Antigravity → Claude is near-live.** Claude sees updates on your next prompt (via the hook) or
   when it calls a bridge tool. A reply Claude is already writing isn't interrupted.
-- **Claude → Antigravity:** the popup appears immediately, but Antigravity's agent reads the
-  message only when it calls `read_messages` or you paste it in. Antigravity has no public API
-  for injecting a prompt into a running agent.
-- The bridge reads Antigravity's local files, whose layout isn't a documented API. A future
-  Antigravity update could change it.
+- **Claude → Antigravity is instant and runs on its own.** Claude's messages go straight into
+  the agent's chat and are acted on without your approval. Turn off `agentBridge.autoSendToAgent`
+  if you'd rather review each one first. If the agent is in the middle of a task, Antigravity
+  decides whether the new message waits or interrupts it.
+- The bridge relies on Antigravity's local files and an internal command, and neither is a documented
+  API. A future Antigravity update could change them; the bridge then falls back to the clipboard.
 
 ## Troubleshooting
 
@@ -121,6 +135,7 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 | `agent-bridge` not in `/mcp` | Run `Install.bat` again, then fully quit Claude (tray icon → Quit) and reopen it |
 | Claude sees old Antigravity data | Check `lastActivity` in `get_antigravity_progress`; if it's stale, run `Install.bat` again to update the bridge |
 | "Antigravity didn't close" | Save your files, close Antigravity, run `Install.bat` again |
+| Claude's message didn't appear in the agent chat | Run *Agent Bridge: Show log* in Antigravity. If it says auto-send is unavailable, your Antigravity version doesn't have the send command; paste from the clipboard instead |
 | Extension not showing in Antigravity | Restart Antigravity. Manual fallback: build the `.vsix` (below), then Extensions → `…` → **Install from VSIX** |
 | Something else | Run `Install.bat --dry-run` and open an issue with the output |
 

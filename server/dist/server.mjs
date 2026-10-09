@@ -21719,7 +21719,7 @@ server.registerTool(
   "send_message",
   {
     title: `Send a message to ${PEER}`,
-    description: `Send a message to the other coding agent (${PEER}). Use it to hand off work, ask a question, report that you finished something, or warn about files you are editing.`,
+    description: (PEER === "antigravity" ? "Send a message to Google Antigravity's agent. It is delivered straight into the agent's chat and submitted automatically, so the agent acts on it right away: write it as a clear, self-contained prompt. Use it to hand off work, ask a question, or warn about files you are editing. " : "Send a message to Claude Code. Use it to report that you finished something, ask a question, or warn about files you are editing. ") + "Use type 'progress' for status updates that need no action.",
     inputSchema: {
       text: external_exports.string().min(1).describe("The message"),
       type: external_exports.enum(["message", "progress"]).optional().describe("'progress' for status updates, 'message' (default) for anything needing attention")
