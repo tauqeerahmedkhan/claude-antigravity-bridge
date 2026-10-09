@@ -1,5 +1,5 @@
 # Claude-Antigravity Agent Bridge
-Claude Code ↔ Antigravity: two coding agents, one project, Use Claude Intelligence and Gemini affordiblity
+Claude Code ↔ Antigravity: two coding agents, one project, Use Claude Intelligence and Antigravity affordiblity
 
 [![Latest release](https://img.shields.io/github/v/release/tauqeerahmedkhan/claude-antigravity-bridge)](https://github.com/tauqeerahmedkhan/claude-antigravity-bridge/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
