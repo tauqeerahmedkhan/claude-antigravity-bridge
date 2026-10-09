@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.1.0 — 2026-10-09
+
+**Antigravity's reports now come back to Claude automatically, and you see every prompt.**
+
+- **You see what's sent:** Claude shows the full prompt in the chat before sending it, and the tool
+  result repeats exactly what was delivered.
+- **Send and wait in one step:** `send_message` now waits for Antigravity's report by default.
+- **Works within the Claude desktop app's 60-second tool limit:** waits run in short rounds (≤45 s).
+  Claude keeps checking with `wait_for_antigravity`, gives you a one-line update each round, and shows
+  you Antigravity's report as soon as it arrives.
+- Reports are found by task ID from the full log, so one already picked up by the prompt hook is never missed.
+- New `not_delivered` status if the task never reached Antigravity (e.g. it was closed).
+- An answer to Antigravity's question no longer keeps showing as `needs_reply`.
+
 ## v1.0.1 — 2026-10-09
 
 **Fixes: Antigravity's replies never reached Claude, and Claude sometimes had to send twice.**

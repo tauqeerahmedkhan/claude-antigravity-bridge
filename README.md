@@ -72,26 +72,29 @@ On macOS and Linux the installer doesn't restart apps; quit and reopen Antigravi
 
 On Windows you can pass these to the batch file, e.g. `Install.bat --no-restart`.
 
-## Working together: two ways
+## Working together
 
-**1. Hand off and keep going (default).** Claude sends a task and carries on with its own work.
-Every task ends with a required instruction: *when you finish, send Claude a `result` report:
-what you did, files changed, build/test results, anything left.* The report shows up in
-Claude's context with your next message (via the prompt hook), labelled `RESULT for task …`.
+Ask Claude to hand something to Antigravity, e.g. *"Have Antigravity run the Round 9 checks, then fix
+whatever failed."* Claude will:
 
-**2. Hand off and wait.** Ask Claude to wait, e.g. *"Have Antigravity run the Round 9 checks and
-wait for the result, then fix anything that failed."* Claude calls `wait_for_antigravity`, which
-returns as soon as the agent reports. Claude then reviews the result and continues in the same turn.
+1. **Show you the exact prompt** in the chat before it's sent, so you always see what's going on.
+2. **Send it:** it lands in Antigravity's agent chat and runs straight away.
+3. **Wait for the report** in short rounds (the Claude desktop app limits each tool call to about a
+   minute), with a one-line update each round.
+4. **Show you Antigravity's report** (what it did, files changed, test results) and carry on.
 
-| `wait_for_antigravity` returns | Meaning |
+Every task tells the agent to report back with a `result`. If you're busy with Claude meanwhile, the
+report also appears in Claude's context with your next message.
+
+| Wait status | Meaning |
 |---|---|
-| `finished` | The agent sent its result report |
-| `needs_reply` | The agent asked Claude a question; Claude answers and waits again |
-| `idle` | The agent went quiet without reporting (default 3 min), so it has probably finished. Claude checks the steps |
-| `still_running` | Wait limit reached (default 5 min) while the agent was still working; Claude can wait again |
-| `no_activity` | Nothing happened; Antigravity may be closed |
+| `finished` | The agent sent its report |
+| `needs_reply` | The agent asked a question; Claude shows it to you, answers, and waits again |
+| `still_running` | Still working; Claude checks again |
+| `idle` | Quiet for 3 min without a report, so it's probably done; Claude reviews the steps |
+| `not_delivered` | The task never reached Antigravity (is it open?) |
 
-Each return also includes the steps the agent ran while Claude waited (title, command, exit code).
+Each status also lists the latest steps the agent ran (with pass/fail).
 
 ## How it works
 
@@ -114,8 +117,8 @@ There's no daemon, no port and no network. Everything goes through one append-on
 | `get_antigravity_progress` | Antigravity's latest steps (title, command, exit code, time) and task list, plus `lastActivity` so Claude can tell if it's current |
 | `list_antigravity_conversations` | Recent Antigravity conversations, newest first |
 | `read_antigravity_artifact` | Read a plan/task/walkthrough artifact |
-| `send_message` | Send Antigravity a task (runs immediately) and get a `task_id` |
-| `wait_for_antigravity` | Wait for the agent's result for a `task_id` (see above) |
+| `send_message` | Send Antigravity a task (runs immediately); waits up to ~45 s for the report and returns a `task_id` |
+| `wait_for_antigravity` | Keep waiting for a task's report (≤45 s per call; Claude repeats it) |
 | `read_messages` | Read messages/results from Antigravity |
 
 It also gets a **prompt hook**: every message you send to Claude automatically includes new

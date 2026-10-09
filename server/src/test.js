@@ -78,44 +78,64 @@ assert.doesNotMatch(hookOut, /Invoice endpoint done/);
 assert.match(hookOut, /1 in progress/);
 assert.match(hookOut, /last step .*Run frontend build finished \[exit 0\]/);
 
-// ---- v1.3: task ids, results, wait_for_antigravity ----
+// ---- send + wait (short polls, desktop app cancels tool calls at ~60 s) ----
+const deliver = (id) => store_post({ from: "antigravity", to: "claude", type: "progress", text: `📨 Delivered to the Antigravity agent: "${id}"` });
+const busFile = path.join(sandbox, "bus", "messages.jsonl");
+function store_post(m) {
+  fs.appendFileSync(busFile, JSON.stringify({ id: Math.random().toString(36).slice(2), ts: new Date().toISOString(), ...m }) + "\n");
+}
 const t0 = Date.now();
-let sent = await call(claude, "send_message", { text: "Run the Round 9 checks" });
-const taskId = sent.match(/task_id: (\S+)/)[1];
-console.log("task sent       ->", taskId);
-setTimeout(() => {
-  const st = path.join(mdir, "b1.json");
-  fs.writeFileSync(st, JSON.stringify({ timestamp: new Date().toISOString(), renderDetails: { messageTitle: "Run round 9 finished" }, content: "exited with code 0" }));
-}, 1500);
-setTimeout(() => call(ag, "send_message", { type: "result", text: "Round 9: 42/42 checks passed, no files changed" }), 3000);
-let w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: taskId, timeout_seconds: 30 }));
-console.log("wait (result)   ->", w.status, "|", w.result, "| steps:", w.steps_while_waiting.map((s) => s.title), `| ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+setTimeout(() => deliver("x"), 500);
+setTimeout(() => fs.writeFileSync(path.join(mdir, "b1.json"), JSON.stringify({ timestamp: new Date().toISOString(), renderDetails: { messageTitle: "Run round 9 finished" }, content: "exited with code 0" })), 1500);
+setTimeout(() => call(ag, "send_message", { type: "result", text: "Round 9: 42/42 checks passed" }), 3000);
+let sent = await call(claude, "send_message", { text: "Run the Round 9 checks", wait_seconds: 20 });
+console.log("send+wait       ->", sent.split("\n").slice(0, 4).join(" / "), `| ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+assert.match(sent, /Prompt delivered:\n---\nRun the Round 9 checks\n---/);
+let w = JSON.parse(sent.slice(sent.indexOf("{")));
 assert.equal(w.status, "finished");
-assert.match(w.result, /42\/42/);
-assert.ok(w.steps_while_waiting.some((s) => s.title === "Run round 9 finished"));
-const raw = fs.readFileSync(path.join(sandbox, "bus", "messages.jsonl"), "utf8");
+assert.match(w.antigravity_report, /42\/42/);
+assert.ok(w.latest_steps.some((s) => s.includes("Run round 9 finished ✓")));
+const taskId = w.task_id;
+const raw = fs.readFileSync(busFile, "utf8");
 assert.ok(raw.includes(`"replyTo":"${taskId}"`), "result auto-linked to the task");
+// asking again later still finds the report, even though it was already marked read
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: taskId, wait_seconds: 5 }));
+assert.equal(w.status, "finished");
 
-setTimeout(() => call(ag, "send_message", { text: "Should I also update the walkthrough?" }), 1500);
-w = JSON.parse(await call(claude, "wait_for_antigravity", { timeout_seconds: 30 }));
-console.log("wait (question) ->", w.status, "|", w.question);
+// still_running then finished across two short calls
+sent = await call(claude, "send_message", { text: "Long task", wait_seconds: 0 });
+const id2 = sent.match(/task_id: ([\w-]+)/)[1];
+deliver("y");
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: id2, wait_seconds: 5 }));
+console.log("poll 1          ->", w.status);
+assert.equal(w.status, "still_running");
+setTimeout(() => call(ag, "send_message", { type: "result", reply_to: id2, text: "Long task done" }), 1000);
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: id2, wait_seconds: 10 }));
+console.log("poll 2          ->", w.status, "|", w.antigravity_report);
+assert.equal(w.status, "finished");
+
+// question, then answered -> no longer needs_reply
+sent = await call(claude, "send_message", { text: "Task 3", wait_seconds: 0 });
+const id3 = sent.match(/task_id: ([\w-]+)/)[1];
+deliver("z");
+setTimeout(() => call(ag, "send_message", { text: "Should I also update the walkthrough?" }), 800);
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: id3, wait_seconds: 10 }));
+console.log("question        ->", w.status, "|", w.antigravity_question);
 assert.equal(w.status, "needs_reply");
 
-setTimeout(() => fs.writeFileSync(path.join(mdir, "b2.json"), JSON.stringify({ timestamp: new Date().toISOString(), renderDetails: { messageTitle: "Edit file" } })), 1000);
-w = JSON.parse(await call(claude, "wait_for_antigravity", { idle_seconds: 5, timeout_seconds: 60 }));
-console.log("wait (idle)     ->", w.status, "after", w.waited_seconds, "s");
+// idle: activity then quiet
+setTimeout(() => fs.writeFileSync(path.join(mdir, "b2.json"), JSON.stringify({ timestamp: new Date().toISOString(), renderDetails: { messageTitle: "Edit file" } })), 500);
+await call(claude, "send_message", { text: "Yes please", type: "progress" });
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: id3, wait_seconds: 20, idle_seconds: 5 }));
+console.log("idle            ->", w.status);
 assert.equal(w.status, "idle");
-
-w = JSON.parse(await call(claude, "wait_for_antigravity", { timeout_seconds: 5, idle_seconds: 60 }));
-console.log("wait (nothing)  ->", w.status);
-assert.equal(w.status, "no_activity");
 
 // ---- regression: agent hand-wrote two results joined by a literal "\n", no trailing newline ----
 const bus = path.join(sandbox, "bus", "messages.jsonl");
 const handA = JSON.stringify({ id: "h1", ts: new Date().toISOString(), from: "antigravity", to: "claude", type: "result", reply_to: "t-1", text: "Fix A done" });
 const handB = JSON.stringify({ id: "h2", ts: new Date().toISOString(), from: "antigravity", to: "claude", type: "result", reply_to: "t-2", text: "Fix B done" });
 fs.appendFileSync(bus, handA + "\\n" + handB); // exactly what PowerShell produced on the user's PC
-sent = await call(claude, "send_message", { text: "Next task after the hand-written lines" });
+sent = await call(claude, "send_message", { text: "Next task after the hand-written lines", wait_seconds: 0 });
 const after = fs.readFileSync(bus, "utf8").split("\n").filter(Boolean);
 assert.ok(after.at(-1).includes("Next task after"), "Claude's message must start on its own line");
 got = await call(claude, "read_messages");

@@ -283,7 +283,8 @@ function agentRules() {
 Google Antigravity's agent may be working on this machine at the same time. You are connected to it through the agent-bridge MCP tools.
 - Antigravity updates arrive in <antigravity_bridge> blocks; take them into account.
 - Before editing files outside your current task, call get_antigravity_progress and check lastActivity to see whether it is current.
-- To hand work to Antigravity, call send_message (it runs in Antigravity's agent right away). To wait for the outcome, call wait_for_antigravity with the returned task_id.
+- To hand work to Antigravity: first show the user the full prompt in your reply, then call send_message (it runs in Antigravity's agent right away and waits briefly for the report).
+- If the status is still_running, keep calling wait_for_antigravity with the task_id (each call waits under a minute), giving the user a one-line update each time, until it is finished. Then show the user Antigravity's report.
 - When you start or finish a chunk of work, or claim a file, tell Antigravity with send_message type "progress".`,
     [path.join(HOME, ".gemini", "GEMINI.md")]:
 `## Working alongside Claude Code (agent-bridge)

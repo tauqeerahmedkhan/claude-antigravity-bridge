@@ -9,7 +9,7 @@ import * as store from "./store.js";
 const ME = (process.env.BRIDGE_AGENT || "claude").toLowerCase();
 const PEER = ME === "claude" ? "antigravity" : "claude";
 
-const server = new McpServer({ name: "agent-bridge", version: "1.0.1" });
+const server = new McpServer({ name: "agent-bridge", version: "1.1.0" });
 
 const text = (obj) => ({
   content: [
@@ -21,32 +21,123 @@ const fmt = (m) =>
   `[${m.ts.slice(11, 19)}] ${m.from}${m.type !== "message" ? ` (${m.type})` : ""}: ${m.text}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The Claude desktop app cancels MCP tool calls after ~60 s, so every wait is short and
+// Claude polls with repeated calls. All state is derived from the log, so nothing is lost
+// between calls (or if the prompt hook already showed a message).
+const MAX_WAIT_S = 55;
+
+async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
+  const callStart = Date.now();
+  const maxMs = Math.min(waitSeconds ?? 45, MAX_WAIT_S) * 1000;
+  const idleMs = (idleSeconds ?? 180) * 1000;
+  const progressToken = extra?._meta?.progressToken;
+  let tick = 0;
+  while (true) {
+    const all = store.readAll();
+    const task = taskId ? all.find((m) => m.id === taskId) : null;
+    if (taskId && !task) return { status: "unknown_task", hint: `No task with id ${taskId}.` };
+    const since = task ? Date.parse(task.ts) : callStart;
+    const fromAg = all.filter((m) => m.from === PEER && Date.parse(m.ts) >= since);
+    const lastClaudeTs = Math.max(since, ...all.filter((m) => m.from === ME && m.to === PEER).map((m) => Date.parse(m.ts)));
+    const result = [...fromAg].reverse().find((m) => m.type === "result" && (!taskId || !m.replyTo || m.replyTo === taskId));
+    const question = [...fromAg].reverse().find((m) => m.type === "message" && Date.parse(m.ts) >= lastClaudeTs);
+    const delivered = fromAg.some((m) => m.type === "progress" && /^📨 Delivered/.test(m.text));
+    const steps = store.stepsSince(since);
+    const lastActivity = Math.max(0, ...steps.map((s) => Date.parse(s.ts)), ...fromAg.map((m) => Date.parse(m.ts)));
+    const now = Date.now();
+
+    let status;
+    if (result) status = "finished";
+    else if (question) status = "needs_reply";
+    else if (!delivered && now - since > 60000) status = "not_delivered";
+    else if (lastActivity && now - lastActivity >= idleMs) status = "idle";
+    else if (now - callStart >= maxMs) status = "still_running";
+
+    if (status) {
+      store.unread(ME); // mark everything seen so the prompt hook doesn't repeat it
+      return {
+        status,
+        task_id: taskId,
+        minutes_since_task_sent: Math.round((now - since) / 6000) / 10,
+        ...(result ? { antigravity_report: result.text } : {}),
+        ...(question ? { antigravity_question: question.text } : {}),
+        steps_so_far: steps.length,
+        failed_steps: steps.filter((s) => s.exitCode !== undefined && s.exitCode !== 0).length,
+        latest_steps: steps.slice(-8).map((s) =>
+          `${s.ts.slice(11, 19)} ${s.title}${s.exitCode !== undefined ? (s.exitCode === 0 ? " ✓" : ` ✗ (exit ${s.exitCode})`) : ""}`),
+        next: {
+          finished: "Show the user Antigravity's report (in full or a faithful summary), then continue.",
+          needs_reply: "Show the user Antigravity's question, answer it with send_message, then wait again.",
+          not_delivered: "The task was not delivered (Antigravity may be closed). Tell the user.",
+          idle: "Antigravity went quiet without a report; it has probably finished. Tell the user and review the steps/files.",
+          still_running: `Antigravity is still working. Give the user a one-line update, then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`,
+        }[status],
+      };
+    }
+    if (progressToken !== undefined && tick++ % 5 === 0) {
+      try {
+        await extra.sendNotification({ method: "notifications/progress",
+          params: { progressToken, progress: Math.round((now - callStart) / 1000), total: Math.round(maxMs / 1000),
+                    message: `waiting for Antigravity (${steps.length} steps so far)` } });
+      } catch {}
+    }
+    if (extra?.signal?.aborted) return { status: "cancelled" };
+    await sleep(2000);
+  }
+}
+
 if (ME === "claude") {
   server.registerTool(
     "send_message",
     {
       title: "Send a task or message to Antigravity",
       description:
-        "Send a message to Google Antigravity's agent. It is delivered straight into the agent's chat " +
-        "and submitted automatically, so the agent acts on it right away: write it as a clear, " +
-        "self-contained prompt. The agent is told to report back with a 'result' message when done. " +
-        "Returns a task_id; call wait_for_antigravity with it if you want to wait for that result. " +
-        "Use type 'progress' for FYI updates that need no action.",
+        "Send a task to Google Antigravity's agent. It is delivered straight into the agent's chat and runs " +
+        "immediately, so write a clear, self-contained prompt. IMPORTANT: before calling this, show the user " +
+        "the complete prompt text in your reply (e.g. as a quote block) so they can see exactly what is sent. " +
+        "The agent is told to report back when done. By default this call then waits up to ~45 s for the report; " +
+        "if the status is still_running, keep calling wait_for_antigravity with the returned task_id until it " +
+        "is finished, giving the user a one-line update each time. When the report arrives, show it to the user. " +
+        "Use type 'progress' (no wait) for FYI updates that need no action.",
       inputSchema: {
-        text: z.string().min(1).describe("The task or message for the Antigravity agent"),
+        text: z.string().min(1).describe("The full prompt for the Antigravity agent"),
         type: z.enum(["message", "progress"]).optional()
           .describe("'message' (default) = a task/question the agent should act on; 'progress' = FYI only"),
+        wait_seconds: z.number().int().min(0).max(MAX_WAIT_S).optional()
+          .describe("How long to wait for the report in this call (default 45; 0 = return immediately)"),
       },
     },
-    async ({ text: t, type }) => {
-      const m = store.post({ from: ME, to: PEER, type: type || "message", text: t });
-      return text(
-        `Sent to Antigravity. task_id: ${m.id}\n` +
-        (m.type === "message"
-          ? "To wait for the agent's result, call wait_for_antigravity with this task_id."
-          : "")
-      );
+    async ({ text: t, type, wait_seconds }, extra) => {
+      const kind = type || "message";
+      const m = store.post({ from: ME, to: PEER, type: kind, text: t });
+      const head = `Sent to Antigravity (task_id: ${m.id}). Prompt delivered:\n---\n${t}\n---`;
+      if (kind !== "message" || wait_seconds === 0) {
+        return text(head + (kind === "message" ? `\nCall wait_for_antigravity with task_id ${m.id} to get the report.` : ""));
+      }
+      const w = await waitForTask({ taskId: m.id, waitSeconds: wait_seconds ?? 45, extra });
+      return text(head + "\n" + JSON.stringify(w, null, 2));
     }
+  );
+
+  server.registerTool(
+    "wait_for_antigravity",
+    {
+      title: "Wait for Antigravity's report",
+      description:
+        "Wait (up to ~45 s per call) for Antigravity's report on a task sent with send_message. Returns " +
+        "finished (with antigravity_report), needs_reply (with antigravity_question), still_running, idle " +
+        "(quiet for idle_seconds: probably done without reporting) or not_delivered. On still_running, give the " +
+        "user a one-line update and call this again with the same task_id; repeat until it changes. " +
+        "When finished, show the user the report.",
+      inputSchema: {
+        task_id: z.string().optional().describe("task_id from send_message (default: any new result)"),
+        wait_seconds: z.number().int().min(5).max(MAX_WAIT_S).optional().describe("Max wait in this call, default 45"),
+        idle_seconds: z.number().int().min(5).max(3600).optional()
+          .describe("Treat as done after this long with no agent activity, default 180"),
+      },
+    },
+    async ({ task_id, wait_seconds, idle_seconds }, extra) =>
+      text(await waitForTask({ taskId: task_id, waitSeconds: wait_seconds, idleSeconds: idle_seconds, extra }))
   );
 } else {
   server.registerTool(
@@ -93,89 +184,6 @@ server.registerTool(
     return text(msgs.map(fmt).join("\n"));
   }
 );
-
-if (ME === "claude") {
-  server.registerTool(
-    "wait_for_antigravity",
-    {
-      title: "Wait for Antigravity to finish",
-      description:
-        "Wait until Antigravity's agent reports back, then return its result together with the steps it " +
-        "ran meanwhile. Use after send_message when you want to continue once Antigravity is done. Ends when: " +
-        "the agent sends a result ('finished'), asks you something ('needs_reply'), goes quiet for " +
-        "idle_seconds after working ('idle': probably done without reporting, so check the steps), or " +
-        "timeout_seconds passes ('still_running' / 'no_activity'). You can call it again to keep waiting.",
-      inputSchema: {
-        task_id: z.string().optional().describe("task_id returned by send_message (default: any result)"),
-        timeout_seconds: z.number().int().min(5).max(1800).optional().describe("Max wait, default 300 (call again to keep waiting)"),
-        idle_seconds: z.number().int().min(5).max(1800).optional()
-          .describe("Treat as done after this long with no new agent steps, default 180"),
-      },
-    },
-    async ({ task_id, timeout_seconds, idle_seconds }, extra) => {
-      const timeout = (timeout_seconds ?? 300) * 1000;
-      const idle = (idle_seconds ?? 180) * 1000;
-      const start = Date.now();
-      const progressToken = extra?._meta?.progressToken;
-      const received = [];
-      let lastActivity = 0;
-      let tick = 0;
-      let status;
-      let result;
-      let question;
-
-      while (true) {
-        for (const m of store.unread(ME)) {
-          received.push(m);
-          lastActivity = Math.max(lastActivity, Date.parse(m.ts) || Date.now());
-          if (m.type === "result" && (!task_id || !m.replyTo || m.replyTo === task_id)) result = m;
-          if (m.type === "message") question = m;
-        }
-        const steps = store.stepsSince(start);
-        if (steps.length) lastActivity = Math.max(lastActivity, Date.parse(steps.at(-1).ts));
-        const now = Date.now();
-        if (result) status = "finished";
-        else if (question) status = "needs_reply";
-        else if (lastActivity && now - lastActivity >= idle) status = "idle";
-        else if (now - start >= timeout) status = lastActivity ? "still_running" : "no_activity";
-        if (status) {
-          const summary = {
-            status,
-            waited_seconds: Math.round((now - start) / 1000),
-            ...(result ? { result: result.text } : {}),
-            ...(question ? { question: question.text } : {}),
-            steps_while_waiting: steps.slice(-25).map((s) => ({
-              ts: s.ts, title: s.title,
-              ...(s.command ? { command: s.command } : {}),
-              ...(s.exitCode !== undefined ? { exitCode: s.exitCode } : {}),
-            })),
-            failed_steps: steps.filter((s) => s.exitCode !== undefined && s.exitCode !== 0).length,
-            other_updates: received.filter((m) => m !== result && m !== question).map(fmt),
-            hint: {
-              finished: "Antigravity reported back. Review the result and steps.",
-              needs_reply: "Antigravity asked something. Answer with send_message, then wait again.",
-              idle: "Agent went quiet without sending a result. It has probably finished; check the steps (and files) to confirm.",
-              still_running: "Agent is still working. Call wait_for_antigravity again to keep waiting.",
-              no_activity: "No sign of the agent working. Check Antigravity is open, or that the message was delivered.",
-            }[status],
-          };
-          return text(summary);
-        }
-        if (progressToken !== undefined && tick++ % 5 === 0) {
-          try {
-            await extra.sendNotification({
-              method: "notifications/progress",
-              params: { progressToken, progress: Math.round((now - start) / 1000), total: Math.round(timeout / 1000),
-                        message: `waiting for Antigravity (${steps.length} steps so far)` },
-            });
-          } catch {}
-        }
-        if (extra?.signal?.aborted) return text({ status: "cancelled" });
-        await sleep(2000);
-      }
-    }
-  );
-}
 
 server.registerTool(
   "get_antigravity_progress",

@@ -15,6 +15,9 @@ try {
       lines.push(`- [${m.ts.slice(11, 19)}] ${m.from}${tag}: ${m.text}`);
     }
     if (msgs.length > 15) lines.push(`(${msgs.length - 15} older not shown; use read_messages)`);
+    if (msgs.some((m) => m.type === "result" || m.type === "message")) {
+      lines.push("Show the user any RESULT or question from Antigravity above before continuing.");
+    }
     lines.push("</antigravity_bridge>");
   }
 
