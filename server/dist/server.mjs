@@ -21777,7 +21777,7 @@ function lastTaskFrom(from = "claude", to = "antigravity") {
 // src/server.js
 var ME = (process.env.BRIDGE_AGENT || "claude").toLowerCase();
 var PEER = ME === "claude" ? "antigravity" : "claude";
-var server = new McpServer({ name: "agent-bridge", version: "1.0.1" });
+var server = new McpServer({ name: "agent-bridge", version: "1.1.0" });
 var text = (obj) => ({
   content: [
     { type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }
