@@ -1,0 +1,36 @@
+{
+  "name": "agent-bridge-antigravity",
+  "displayName": "Agent Bridge (Claude Code ↔ Antigravity)",
+  "description": "Streams Antigravity agent progress to Claude Code and shows Claude's messages in Antigravity.",
+  "version": "1.1.0",
+  "publisher": "tauqe",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://example.invalid/agent-bridge" },
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "agentBridge.sendToClaude", "title": "Agent Bridge: Send message to Claude Code" },
+      { "command": "agentBridge.copyLastFromClaude", "title": "Agent Bridge: Copy last Claude message (to paste into agent)" },
+      { "command": "agentBridge.showLog", "title": "Agent Bridge: Show log" },
+      { "command": "agentBridge.reportNow", "title": "Agent Bridge: Ping Claude Code" }
+    ],
+    "configuration": {
+      "title": "Agent Bridge",
+      "properties": {
+        "agentBridge.autoReportProgress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Post Antigravity task.md / artifact changes to Claude Code automatically."
+        },
+        "agentBridge.notifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a popup when Claude Code sends a message."
+        }
+      }
+    }
+  }
+}

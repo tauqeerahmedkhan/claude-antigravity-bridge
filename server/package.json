@@ -1,0 +1,18 @@
+{
+  "name": "agent-bridge-server",
+  "version": "1.1.0",
+  "private": true,
+  "description": "MCP message bus shared by Claude Code and Google Antigravity",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/server.js src/claude-hook.js --bundle --platform=node --format=esm --target=node18 --outdir=dist --out-extension:.js=.mjs --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\"",
+    "test": "npm run build && node src/test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
