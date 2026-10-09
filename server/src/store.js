@@ -19,8 +19,8 @@ function ensureDir() {
   fs.mkdirSync(BRIDGE_DIR, { recursive: true });
 }
 
-/** Append one message. type: "message" | "progress" */
-export function post({ from, to = "all", type = "message", text, meta }) {
+/** Append one message. type: "message" | "progress" | "result" */
+export function post({ from, to = "all", type = "message", text, meta, replyTo }) {
   if (!text || !String(text).trim()) throw new Error("text is required");
   ensureDir();
   const msg = {
@@ -30,6 +30,7 @@ export function post({ from, to = "all", type = "message", text, meta }) {
     to,
     type,
     text: String(text),
+    ...(replyTo ? { replyTo } : {}),
     ...(meta ? { meta } : {}),
   };
   fs.appendFileSync(LOG_FILE, JSON.stringify(msg) + "\n", "utf8");
@@ -233,4 +234,25 @@ export function summarizeProgress(conversationId) {
       : null,
     artifacts: conv.artifacts.map((a) => ({ name: a.name, updated: a.updated })),
   };
+}
+
+/** Agent steps from the most recently active conversations newer than `sinceMs`. */
+export function stepsSince(sinceMs, convLimit = 3) {
+  const out = [];
+  for (const c of listConversations(convLimit)) {
+    for (const st of recentSteps(c.id, 500)) {
+      if (Date.parse(st.ts) > sinceMs) out.push({ ...st, conversationId: c.id });
+    }
+  }
+  return out.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+}
+
+/** Last task Claude sent to Antigravity (for auto-linking a result to it). */
+export function lastTaskFrom(from = "claude", to = "antigravity") {
+  const all = readAll();
+  for (let i = all.length - 1; i >= 0; i--) {
+    const m = all[i];
+    if (m.from === from && m.to === to && m.type === "message") return m;
+  }
+  return null;
 }

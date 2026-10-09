@@ -274,12 +274,14 @@ function agentRules() {
 Google Antigravity's agent may be working on this machine at the same time. You are connected to it through the agent-bridge MCP tools.
 - Antigravity updates arrive in <antigravity_bridge> blocks; take them into account.
 - Before editing files outside your current task, call get_antigravity_progress and check lastActivity to see whether it is current.
-- When you start or finish a chunk of work, or claim a file, call send_message.`,
+- To hand work to Antigravity, call send_message (it runs in Antigravity's agent right away). To wait for the outcome, call wait_for_antigravity with the returned task_id.
+- When you start or finish a chunk of work, or claim a file, tell Antigravity with send_message type "progress".`,
     [path.join(HOME, ".gemini", "GEMINI.md")]:
 `## Working alongside Claude Code (agent-bridge)
 Claude Code may be working on this machine at the same time. You are connected to it through the agent-bridge MCP tools.
 - At the start of each task and before editing shared files, call read_messages.
-- When you finish a task or need Claude to do something, call send_message.`,
+- Tasks from Claude arrive as "[Task from Claude Code via agent-bridge] Task ID: …". When you finish one (or get blocked), ALWAYS call send_message with type "result", reply_to set to that Task ID, and a short report: what you did, files changed, build/test results, anything left.
+- When you need Claude to do something, call send_message with type "message".`,
   };
   for (const [file, body] of Object.entries(rules)) {
     if (!exists(path.dirname(file)) && !UNINSTALL) continue; // that app isn't installed

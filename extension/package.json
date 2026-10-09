@@ -2,7 +2,7 @@
   "name": "agent-bridge-antigravity",
   "displayName": "Agent Bridge (Claude Code ↔ Antigravity)",
   "description": "Streams Antigravity agent progress to Claude Code and delivers Claude Code's messages straight into the Antigravity agent chat.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "tauqe",
   "license": "MIT",
   "repository": {

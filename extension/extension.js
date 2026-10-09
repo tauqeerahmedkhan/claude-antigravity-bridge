@@ -192,18 +192,32 @@ function activate(context) {
     }
     return sendCmdAvailable;
   }
+  // Every task ends with a firm report-back requirement so Claude always gets a result.
+  function buildPrompt(text, taskId) {
+    return [
+      "[Task from Claude Code via agent-bridge]" + (taskId ? `  Task ID: ${taskId}` : ""),
+      "",
+      text,
+      "",
+      "---",
+      "REQUIRED when you finish (or if you get blocked or need a decision):",
+      "call the agent-bridge tool send_message with",
+      `  type: "result"${taskId ? `, reply_to: "${taskId}"` : ""}`,
+      "  text: a short report: what you did, files changed, build/test results, anything left or blocked.",
+      "Claude Code is waiting for this report, so do not skip it, even if the task failed.",
+    ].join("\n");
+  }
   const queue = [];
   let sending = false;
-  function enqueueForAgent(text) {
-    queue.push(text);
+  function enqueueForAgent(text, taskId) {
+    queue.push({ text, taskId });
     if (!sending) drainQueue();
   }
   async function drainQueue() {
     sending = true;
     while (queue.length) {
-      const text = queue.shift();
-      const prompt = `[Message from Claude Code via agent-bridge]\n${text}\n\n` +
-        `(If you need to answer Claude, use the agent-bridge send_message tool.)`;
+      const { text, taskId } = queue.shift();
+      const prompt = buildPrompt(text, taskId);
       const short = text.length > 80 ? text.slice(0, 77) + "…" : text;
       let delivered = false;
       if (await hasSendCommand()) {
@@ -247,7 +261,7 @@ function activate(context) {
       log(`← ${m.from}: ${m.text}`);
       if (m.type === "progress") continue; // log only, no popup
       if (cfg().get("autoSendToAgent", true)) {
-        enqueueForAgent(m.text);
+        enqueueForAgent(m.text, m.id);
         continue;
       }
       unreadCount++;
@@ -255,7 +269,7 @@ function activate(context) {
         vscode.window
           .showInformationMessage(`Claude: ${m.text}`, "Send to agent", "Reply")
           .then((choice) => {
-            if (choice === "Send to agent") enqueueForAgent(m.text);
+            if (choice === "Send to agent") enqueueForAgent(m.text, m.id);
             else if (choice === "Reply") vscode.commands.executeCommand("agentBridge.sendToClaude");
           });
       }
@@ -290,7 +304,7 @@ function activate(context) {
       if (!lastClaude) return vscode.window.showInformationMessage("No messages from Claude yet.");
       unreadCount = 0;
       renderBar();
-      enqueueForAgent(lastClaude.text);
+      enqueueForAgent(lastClaude.text, lastClaude.id);
     }),
     vscode.commands.registerCommand("agentBridge.copyLastFromClaude", () => {
       if (!lastClaude) return vscode.window.showInformationMessage("No messages from Claude yet.");

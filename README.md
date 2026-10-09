@@ -3,6 +3,7 @@
 Let **Claude Code** and **Google Antigravity's agent** work on the same machine as a team.
 Claude sees what Antigravity's agent is doing, step by step, as it happens. When Claude sends
 Antigravity a message, it goes straight into the agent's chat and runs, with no copy-paste and no Enter key.
+When the agent finishes, it reports back to Claude.
 
 ```
 🔧 Run frontend build finished ✓
@@ -57,6 +58,27 @@ On macOS and Linux the installer doesn't restart apps; quit and reopen Antigravi
 
 On Windows you can pass these to the batch file, e.g. `Install.bat --no-restart`.
 
+## Working together: two ways
+
+**1. Hand off and keep going (default).** Claude sends a task and carries on with its own work.
+Every task ends with a required instruction: *when you finish, send Claude a `result` report:
+what you did, files changed, build/test results, anything left.* The report shows up in
+Claude's context with your next message (via the prompt hook), labelled `RESULT for task …`.
+
+**2. Hand off and wait.** Ask Claude to wait, e.g. *"Have Antigravity run the Round 9 checks and
+wait for the result, then fix anything that failed."* Claude calls `wait_for_antigravity`, which
+returns as soon as the agent reports. Claude then reviews the result and continues in the same turn.
+
+| `wait_for_antigravity` returns | Meaning |
+|---|---|
+| `finished` | The agent sent its result report |
+| `needs_reply` | The agent asked Claude a question; Claude answers and waits again |
+| `idle` | The agent went quiet without reporting (default 3 min), so it has probably finished. Claude checks the steps |
+| `still_running` | Wait limit reached (default 5 min) while the agent was still working; Claude can wait again |
+| `no_activity` | Nothing happened; Antigravity may be closed |
+
+Each return also includes the steps the agent ran while Claude waited (title, command, exit code).
+
 ## How it works
 
 ```
@@ -78,20 +100,24 @@ There's no daemon, no port and no network. Everything goes through one append-on
 | `get_antigravity_progress` | Antigravity's latest steps (title, command, exit code, time) and task list, plus `lastActivity` so Claude can tell if it's current |
 | `list_antigravity_conversations` | Recent Antigravity conversations, newest first |
 | `read_antigravity_artifact` | Read a plan/task/walkthrough artifact |
-| `send_message` / `read_messages` | Talk to Antigravity |
+| `send_message` | Send Antigravity a task (runs immediately) and get a `task_id` |
+| `wait_for_antigravity` | Wait for the agent's result for a `task_id` (see above) |
+| `read_messages` | Read messages/results from Antigravity |
 
 It also gets a **prompt hook**: every message you send to Claude automatically includes new
 Antigravity messages and its last step, so Claude stays current without having to ask.
 
-**Antigravity's agent gets** the same `send_message` / `read_messages` tools.
+**Antigravity's agent gets** `send_message` (with `type: "result"` and `reply_to` for task
+reports; `reply_to` defaults to Claude's latest task) and `read_messages`.
 
 **The Antigravity extension:**
 - posts each finished agent step to Claude as it happens
 - **delivers Claude's messages straight into the agent chat and submits them.** It uses
   Antigravity's built-in `antigravity.sendPromptToAgentPanel` command, the same one
-  Antigravity's own previews use to prompt the agent. Each message arrives as
-  `[Message from Claude Code via agent-bridge] …`, and Claude gets a `📨 Delivered` confirmation.
-  Several messages are sent one at a time, in order.
+  Antigravity's own previews use to prompt the agent. Each task arrives as
+  `[Task from Claude Code via agent-bridge] Task ID: …`, followed by the required report-back
+  instruction, and Claude gets a `📨 Delivered` confirmation. Several messages are sent one at a
+  time, in order.
 - if that command isn't available (e.g. a future Antigravity version renames it), it puts the
   message on your clipboard and tells you to paste it with `Ctrl+V`
 - adds a status-bar item: click it to message Claude
@@ -119,8 +145,12 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 
 ## Limits
 
-- **Antigravity → Claude is near-live.** Claude sees updates on your next prompt (via the hook) or
-  when it calls a bridge tool. A reply Claude is already writing isn't interrupted.
+- **Antigravity → Claude is near-live.** Claude sees updates on your next prompt (via the hook),
+  when it calls a bridge tool, or while it waits with `wait_for_antigravity`. Nothing can start a
+  new Claude turn by itself, so for long tasks you either let Claude wait or nudge it later.
+- **Result reports depend on the agent following the instruction.** It's told firmly, in every
+  task and in `GEMINI.md`. If it doesn't send one, `wait_for_antigravity` ends as `idle` and Claude
+  gets the step list instead.
 - **Claude → Antigravity is instant and runs on its own.** Claude's messages go straight into
   the agent's chat and are acted on without your approval. Turn off `agentBridge.autoSendToAgent`
   if you'd rather review each one first. If the agent is in the middle of a task, Antigravity

@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Let Claude Code and Google Antigravity's agent talk to each other and see each other's progress live",
   "license": "MIT",

@@ -11,7 +11,8 @@ try {
   if (msgs.length) {
     lines.push(`<antigravity_bridge new_messages="${msgs.length}">`);
     for (const m of msgs.slice(-15)) {
-      lines.push(`- [${m.ts.slice(11, 19)}] ${m.from}${m.type === "progress" ? " (progress)" : ""}: ${m.text}`);
+      const tag = m.type === "result" ? " RESULT" + (m.replyTo ? ` for task ${m.replyTo}` : "") : m.type === "progress" ? " (progress)" : "";
+      lines.push(`- [${m.ts.slice(11, 19)}] ${m.from}${tag}: ${m.text}`);
     }
     if (msgs.length > 15) lines.push(`(${msgs.length - 15} older not shown; use read_messages)`);
     lines.push("</antigravity_bridge>");

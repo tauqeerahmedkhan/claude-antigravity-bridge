@@ -21508,7 +21508,7 @@ var BRAIN_DIR = BRAIN_DIRS[0];
 function ensureDir() {
   fs.mkdirSync(BRIDGE_DIR, { recursive: true });
 }
-function post({ from, to = "all", type = "message", text: text2, meta }) {
+function post({ from, to = "all", type = "message", text: text2, meta, replyTo }) {
   if (!text2 || !String(text2).trim()) throw new Error("text is required");
   ensureDir();
   const msg = {
@@ -21518,6 +21518,7 @@ function post({ from, to = "all", type = "message", text: text2, meta }) {
     to,
     type,
     text: String(text2),
+    ...replyTo ? { replyTo } : {},
     ...meta ? { meta } : {}
   };
   fs.appendFileSync(LOG_FILE, JSON.stringify(msg) + "\n", "utf8");
@@ -21704,32 +21705,74 @@ function summarizeProgress(conversationId) {
     artifacts: conv.artifacts.map((a) => ({ name: a.name, updated: a.updated }))
   };
 }
+function stepsSince(sinceMs, convLimit = 3) {
+  const out = [];
+  for (const c of listConversations(convLimit)) {
+    for (const st of recentSteps(c.id, 500)) {
+      if (Date.parse(st.ts) > sinceMs) out.push({ ...st, conversationId: c.id });
+    }
+  }
+  return out.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+}
+function lastTaskFrom(from = "claude", to = "antigravity") {
+  const all = readAll();
+  for (let i = all.length - 1; i >= 0; i--) {
+    const m = all[i];
+    if (m.from === from && m.to === to && m.type === "message") return m;
+  }
+  return null;
+}
 
 // src/server.js
 var ME = (process.env.BRIDGE_AGENT || "claude").toLowerCase();
 var PEER = ME === "claude" ? "antigravity" : "claude";
-var server = new McpServer({ name: "agent-bridge", version: "1.0.0" });
+var server = new McpServer({ name: "agent-bridge", version: "1.3.0" });
 var text = (obj) => ({
   content: [
     { type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }
   ]
 });
-var fmt = (m) => `[${m.ts.slice(11, 19)}] ${m.from}${m.type === "progress" ? " (progress)" : ""}: ${m.text}`;
-server.registerTool(
-  "send_message",
-  {
-    title: `Send a message to ${PEER}`,
-    description: (PEER === "antigravity" ? "Send a message to Google Antigravity's agent. It is delivered straight into the agent's chat and submitted automatically, so the agent acts on it right away: write it as a clear, self-contained prompt. Use it to hand off work, ask a question, or warn about files you are editing. " : "Send a message to Claude Code. Use it to report that you finished something, ask a question, or warn about files you are editing. ") + "Use type 'progress' for status updates that need no action.",
-    inputSchema: {
-      text: external_exports.string().min(1).describe("The message"),
-      type: external_exports.enum(["message", "progress"]).optional().describe("'progress' for status updates, 'message' (default) for anything needing attention")
+var fmt = (m) => `[${m.ts.slice(11, 19)}] ${m.from}${m.type !== "message" ? ` (${m.type})` : ""}: ${m.text}`;
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+if (ME === "claude") {
+  server.registerTool(
+    "send_message",
+    {
+      title: "Send a task or message to Antigravity",
+      description: "Send a message to Google Antigravity's agent. It is delivered straight into the agent's chat and submitted automatically, so the agent acts on it right away: write it as a clear, self-contained prompt. The agent is told to report back with a 'result' message when done. Returns a task_id; call wait_for_antigravity with it if you want to wait for that result. Use type 'progress' for FYI updates that need no action.",
+      inputSchema: {
+        text: external_exports.string().min(1).describe("The task or message for the Antigravity agent"),
+        type: external_exports.enum(["message", "progress"]).optional().describe("'message' (default) = a task/question the agent should act on; 'progress' = FYI only")
+      }
+    },
+    async ({ text: t, type }) => {
+      const m = post({ from: ME, to: PEER, type: type || "message", text: t });
+      return text(
+        `Sent to Antigravity. task_id: ${m.id}
+` + (m.type === "message" ? "To wait for the agent's result, call wait_for_antigravity with this task_id." : "")
+      );
     }
-  },
-  async ({ text: t, type }) => {
-    const m = post({ from: ME, to: PEER, type: type || "message", text: t });
-    return text(`Sent to ${PEER} (${m.id}).`);
-  }
-);
+  );
+} else {
+  server.registerTool(
+    "send_message",
+    {
+      title: "Send a message or result to Claude Code",
+      description: "Send a message to Claude Code. When you finish a task Claude gave you (or get stuck), you MUST send type 'result' with reply_to set to that task's id and a short report: what you did, files changed, build/test results, anything left or blocked. Use 'message' for questions, 'progress' for FYI updates.",
+      inputSchema: {
+        text: external_exports.string().min(1).describe("The message or result report"),
+        type: external_exports.enum(["message", "progress", "result"]).optional().describe("'result' = task finished/blocked report; 'message' (default) = needs Claude's attention; 'progress' = FYI"),
+        reply_to: external_exports.string().optional().describe("Task id from Claude's message (shown as 'Task ID: \u2026'). Defaults to Claude's latest task.")
+      }
+    },
+    async ({ text: t, type, reply_to }) => {
+      const kind = type || "message";
+      const replyTo = reply_to || (kind === "result" ? lastTaskFrom("claude", "antigravity")?.id : void 0);
+      const m = post({ from: ME, to: PEER, type: kind, text: t, replyTo });
+      return text(`Sent to Claude (${m.id})${replyTo ? ` as ${kind} for task ${replyTo}` : ""}.`);
+    }
+  );
+}
 server.registerTool(
   "read_messages",
   {
@@ -21745,6 +21788,87 @@ server.registerTool(
     return text(msgs.map(fmt).join("\n"));
   }
 );
+if (ME === "claude") {
+  server.registerTool(
+    "wait_for_antigravity",
+    {
+      title: "Wait for Antigravity to finish",
+      description: "Wait until Antigravity's agent reports back, then return its result together with the steps it ran meanwhile. Use after send_message when you want to continue once Antigravity is done. Ends when: the agent sends a result ('finished'), asks you something ('needs_reply'), goes quiet for idle_seconds after working ('idle': probably done without reporting, so check the steps), or timeout_seconds passes ('still_running' / 'no_activity'). You can call it again to keep waiting.",
+      inputSchema: {
+        task_id: external_exports.string().optional().describe("task_id returned by send_message (default: any result)"),
+        timeout_seconds: external_exports.number().int().min(5).max(1800).optional().describe("Max wait, default 300 (call again to keep waiting)"),
+        idle_seconds: external_exports.number().int().min(5).max(1800).optional().describe("Treat as done after this long with no new agent steps, default 180")
+      }
+    },
+    async ({ task_id, timeout_seconds, idle_seconds }, extra) => {
+      const timeout = (timeout_seconds ?? 300) * 1e3;
+      const idle = (idle_seconds ?? 180) * 1e3;
+      const start = Date.now();
+      const progressToken = extra?._meta?.progressToken;
+      const received = [];
+      let lastActivity = 0;
+      let tick = 0;
+      let status;
+      let result;
+      let question;
+      while (true) {
+        for (const m of unread(ME)) {
+          received.push(m);
+          lastActivity = Math.max(lastActivity, Date.parse(m.ts) || Date.now());
+          if (m.type === "result" && (!task_id || !m.replyTo || m.replyTo === task_id)) result = m;
+          if (m.type === "message") question = m;
+        }
+        const steps = stepsSince(start);
+        if (steps.length) lastActivity = Math.max(lastActivity, Date.parse(steps.at(-1).ts));
+        const now = Date.now();
+        if (result) status = "finished";
+        else if (question) status = "needs_reply";
+        else if (lastActivity && now - lastActivity >= idle) status = "idle";
+        else if (now - start >= timeout) status = lastActivity ? "still_running" : "no_activity";
+        if (status) {
+          const summary = {
+            status,
+            waited_seconds: Math.round((now - start) / 1e3),
+            ...result ? { result: result.text } : {},
+            ...question ? { question: question.text } : {},
+            steps_while_waiting: steps.slice(-25).map((s) => ({
+              ts: s.ts,
+              title: s.title,
+              ...s.command ? { command: s.command } : {},
+              ...s.exitCode !== void 0 ? { exitCode: s.exitCode } : {}
+            })),
+            failed_steps: steps.filter((s) => s.exitCode !== void 0 && s.exitCode !== 0).length,
+            other_updates: received.filter((m) => m !== result && m !== question).map(fmt),
+            hint: {
+              finished: "Antigravity reported back. Review the result and steps.",
+              needs_reply: "Antigravity asked something. Answer with send_message, then wait again.",
+              idle: "Agent went quiet without sending a result. It has probably finished; check the steps (and files) to confirm.",
+              still_running: "Agent is still working. Call wait_for_antigravity again to keep waiting.",
+              no_activity: "No sign of the agent working. Check Antigravity is open, or that the message was delivered."
+            }[status]
+          };
+          return text(summary);
+        }
+        if (progressToken !== void 0 && tick++ % 5 === 0) {
+          try {
+            await extra.sendNotification({
+              method: "notifications/progress",
+              params: {
+                progressToken,
+                progress: Math.round((now - start) / 1e3),
+                total: Math.round(timeout / 1e3),
+                message: `waiting for Antigravity (${steps.length} steps so far)`
+              }
+            });
+          } catch {
+          }
+        }
+        if (extra?.signal?.aborted) return text({ status: "cancelled" });
+        await sleep(2e3);
+      }
+    }
+  );
+}
 server.registerTool(
   "get_antigravity_progress",
   {

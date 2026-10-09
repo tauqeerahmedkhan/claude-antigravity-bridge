@@ -48,7 +48,7 @@ const ag = await connect("antigravity");
 
 const tools = (await claude.listTools()).tools.map((t) => t.name).sort();
 console.log("tools:", tools.join(", "));
-assert.equal(tools.length, 5);
+assert.equal(tools.length, 6);
 
 await call(claude, "send_message", { text: "I'm editing src/billing.ts, avoid it" });
 let got = await call(ag, "read_messages");
@@ -77,6 +77,38 @@ assert.match(hookOut, /Starting tests now/);
 assert.doesNotMatch(hookOut, /Invoice endpoint done/);
 assert.match(hookOut, /1 in progress/);
 assert.match(hookOut, /last step .*Run frontend build finished \[exit 0\]/);
+
+// ---- v1.3: task ids, results, wait_for_antigravity ----
+const t0 = Date.now();
+let sent = await call(claude, "send_message", { text: "Run the Round 9 checks" });
+const taskId = sent.match(/task_id: (\S+)/)[1];
+console.log("task sent       ->", taskId);
+setTimeout(() => {
+  const st = path.join(mdir, "b1.json");
+  fs.writeFileSync(st, JSON.stringify({ timestamp: new Date().toISOString(), renderDetails: { messageTitle: "Run round 9 finished" }, content: "exited with code 0" }));
+}, 1500);
+setTimeout(() => call(ag, "send_message", { type: "result", text: "Round 9: 42/42 checks passed, no files changed" }), 3000);
+let w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: taskId, timeout_seconds: 30 }));
+console.log("wait (result)   ->", w.status, "|", w.result, "| steps:", w.steps_while_waiting.map((s) => s.title), `| ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+assert.equal(w.status, "finished");
+assert.match(w.result, /42\/42/);
+assert.ok(w.steps_while_waiting.some((s) => s.title === "Run round 9 finished"));
+const raw = fs.readFileSync(path.join(sandbox, "bus", "messages.jsonl"), "utf8");
+assert.ok(raw.includes(`"replyTo":"${taskId}"`), "result auto-linked to the task");
+
+setTimeout(() => call(ag, "send_message", { text: "Should I also update the walkthrough?" }), 1500);
+w = JSON.parse(await call(claude, "wait_for_antigravity", { timeout_seconds: 30 }));
+console.log("wait (question) ->", w.status, "|", w.question);
+assert.equal(w.status, "needs_reply");
+
+setTimeout(() => fs.writeFileSync(path.join(mdir, "b2.json"), JSON.stringify({ timestamp: new Date().toISOString(), renderDetails: { messageTitle: "Edit file" } })), 1000);
+w = JSON.parse(await call(claude, "wait_for_antigravity", { idle_seconds: 5, timeout_seconds: 60 }));
+console.log("wait (idle)     ->", w.status, "after", w.waited_seconds, "s");
+assert.equal(w.status, "idle");
+
+w = JSON.parse(await call(claude, "wait_for_antigravity", { timeout_seconds: 5, idle_seconds: 60 }));
+console.log("wait (nothing)  ->", w.status);
+assert.equal(w.status, "no_activity");
 
 await claude.close();
 await ag.close();
