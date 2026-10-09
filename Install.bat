@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Agent Bridge - Install
+title Claude-Antigravity Agent Bridge - Install
 cd /d "%~dp0"
 
 if not exist "%~dp0setup.js" goto notextracted

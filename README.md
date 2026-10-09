@@ -1,26 +1,37 @@
-# Agent Bridge — Claude Code ↔ Google Antigravity
+# Claude-Antigravity Agent Bridge
 
-Let **Claude Code** and **Google Antigravity's agent** work on the same machine as a team.
-Claude sees what Antigravity's agent is doing, step by step, as it happens. When Claude sends
-Antigravity a message, it goes straight into the agent's chat and runs, with no copy-paste and no Enter key.
-When the agent finishes, it reports back to Claude.
+[![Latest release](https://img.shields.io/github/v/release/tauqeerahmedkhan/claude-antigravity-bridge)](https://github.com/tauqeerahmedkhan/claude-antigravity-bridge/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+
+**Let Claude Code and Google Antigravity's agent work on the same project as a team.**
+
+- 👀 **Claude sees Antigravity working, live:** every command it runs, with pass/fail.
+- 📨 **Claude hands tasks to Antigravity:** they go straight into the agent's chat and run. No copy-paste, no Enter key.
+- ✅ **Antigravity reports back:** when it finishes, Claude gets a summary of what was done, files changed and test results.
+- ⏳ **Claude can wait for the result** and carry on by itself once Antigravity is done.
 
 ```
-🔧 Run frontend build finished ✓
-🔧 Run Round 8 live verification script finished ✓
-🔧 Run tests finished ✗ (exit 1)
+You → Claude: "Have Antigravity run the Round 9 checks, wait for the result, then fix whatever failed."
+
+Claude → Antigravity   📨 Task delivered to the agent
+Antigravity            🔧 Run round 9 verification finished ✗ (exit 1)
+Antigravity → Claude   ✅ RESULT: 40/42 checks passed; 2 failures in agreements API (see log)
+Claude                 Fixes the two failures…
 ```
+
+> Community project, not affiliated with or endorsed by Anthropic or Google.
 
 ## Install (Windows, one click)
 
-1. **Download** this repo: green **Code** button → **Download ZIP**, or grab the zip from Releases.
+1. **Download** [`claude-antigravity-bridge.zip`](https://github.com/tauqeerahmedkhan/claude-antigravity-bridge/releases/latest/download/claude-antigravity-bridge.zip) from the latest release.
 2. **Extract** it: right-click the zip → **Extract All**.
 3. **Double-click `Install.bat`.**
 
 That's it. The installer:
 
 - installs Node.js for you if it's missing (via `winget`)
-- removes any older Agent Bridge install, including a manually installed extension
+- removes any older install of the bridge, including a manually installed extension
 - connects **Claude Code** (CLI and the Claude desktop app) to the bridge and adds a live-update hook
 - connects **Antigravity's agent** to the bridge and installs the Antigravity extension
 - adds a short "you're working alongside the other agent" note to your global `CLAUDE.md` and `GEMINI.md`
@@ -167,7 +178,7 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 | "Antigravity didn't close" | Save your files, close Antigravity, run `Install.bat` again |
 | Claude's message didn't appear in the agent chat | Run *Agent Bridge: Show log* in Antigravity. If it says auto-send is unavailable, your Antigravity version doesn't have the send command; paste from the clipboard instead |
 | Extension not showing in Antigravity | Restart Antigravity. Manual fallback: build the `.vsix` (below), then Extensions → `…` → **Install from VSIX** |
-| Something else | Run `Install.bat --dry-run` and open an issue with the output |
+| Something else | Run `Install.bat --dry-run` and [open an issue](https://github.com/tauqeerahmedkhan/claude-antigravity-bridge/issues) with the output |
 
 ## Development
 
@@ -191,6 +202,10 @@ Message format (`~/.agent-bridge/messages.jsonl`, one JSON object per line):
 {"id":"…","ts":"2026-10-09T05:16:31Z","from":"antigravity","to":"claude","type":"progress","text":"🔧 Run frontend build finished ✓"}
 ```
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
-MIT
+MIT. Claude and Claude Code are trademarks of Anthropic; Antigravity and Gemini are trademarks of Google.

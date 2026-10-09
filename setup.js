@@ -354,7 +354,7 @@ function restartApps() {
 
 // ---------------------------------------------------------------- main
 (function main() {
-  console.log(`\nAgent Bridge v${EXT_PKG.version} — ${UNINSTALL ? "uninstall" : "install"}${DRY ? " (dry run)" : ""}`);
+  console.log(`\nClaude-Antigravity Agent Bridge v${EXT_PKG.version} — ${UNINSTALL ? "uninstall" : "install"}${DRY ? " (dry run)" : ""}`);
   try {
     const major = +process.versions.node.split(".")[0];
     if (major < 18) throw new Error(`Node.js 18 or newer is required (found ${process.version}).`);
