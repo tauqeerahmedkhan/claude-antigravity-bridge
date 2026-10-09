@@ -1,6 +1,6 @@
 {
   "name": "claude-antigravity-bridge",
-  "version": "1.4.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Claude-Antigravity Agent Bridge: let Claude Code and Google Antigravity's agent work as a team",
   "license": "MIT",

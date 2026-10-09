@@ -1,40 +1,25 @@
 # Changelog
 
-## v1.4.0 — 2026-10-09
+## v1.0.0 — 2026-10-09
 
-**No more clicking Save after the agent edits files.**
+**First public release.** Claude Code and Google Antigravity's agent, working as a team.
 
-- The installer turns on auto-save in Antigravity (`files.autoSave: afterDelay`, 1 s). The agent's
-  code changes land in open editor tabs, and until now they waited for a manual Save before your app
-  saw them.
-- Respects an auto-save mode you've already chosen; uninstall turns it back off only if the installer
-  turned it on. Skip with `--no-autosave`.
+### Claude ↔ Antigravity
+- **Live progress:** Claude sees every step Antigravity's agent runs (command, pass/fail, time),
+  via MCP tools and a prompt hook that adds fresh updates to every message you send Claude.
+- **Auto-delivered tasks:** Claude's messages go straight into the Antigravity agent chat and are
+  submitted automatically, using Antigravity's built-in `antigravity.sendPromptToAgentPanel` command.
+  Falls back to the clipboard if that command isn't available.
+- **Result reports:** every task carries a Task ID and a required report-back instruction; the agent
+  sends Claude a `result` covering what it did, files changed, build/test results and anything left.
+- **`wait_for_antigravity`:** Claude can hand off a task, wait for the result and carry on in the
+  same turn. Ends as `finished`, `needs_reply`, `idle`, `still_running` or `no_activity`.
 
-## v1.3.0 — 2026-10-09
-
-**Antigravity reports back, and Claude can wait for it.**
-
-- Every task Claude sends carries a Task ID and a required report-back instruction: when the
-  agent finishes (or gets blocked), it sends Claude a `result` report covering what it did, files changed,
-  build/test results and anything left.
-- New `wait_for_antigravity` tool: Claude hands off a task and waits for the result, then carries
-  on in the same turn. Ends as `finished`, `needs_reply`, `idle`, `still_running` or `no_activity`.
-- Results are linked to their task automatically; the prompt hook labels them `RESULT for task …`.
-
-## v1.2.0 — 2026-10-09
-
-**Claude's messages go straight into the Antigravity agent.**
-
-- Messages from Claude are delivered into the agent chat and submitted automatically, using
-  Antigravity's built-in `antigravity.sendPromptToAgentPanel` command. No copy-paste, no Enter.
-- Falls back to the clipboard if that command isn't available.
-- New setting `agentBridge.autoSendToAgent` (default on).
-
-## v1.1.0 — 2026-10-09
-
-**First public release.**
-
-- One-click Windows installer (`Install.bat`): installs Node.js if needed, removes old installs,
-  sets up Claude Code, the Claude desktop app and Antigravity, and restarts both apps.
-- Live, step-by-step Antigravity progress for Claude (supports current `antigravity-ide` builds).
-- Pre-bundled MCP server, so no `npm install` is needed.
+### Installer
+- One click on Windows (`Install.bat`): installs Node.js if needed, removes older installs, sets up
+  Claude Code, the Claude desktop app and Antigravity, installs the extension and restarts both apps.
+- Turns on Antigravity auto-save, so the agent's edits are saved without clicking Save.
+- Adds short "work alongside the other agent" rules to `CLAUDE.md` and `GEMINI.md`.
+- Pre-bundled server, so no `npm install` is needed. Backs up every file it edits.
+  Options: `--dry-run`, `--no-restart`, `--no-autosave`, `--uninstall`.
+- Supports current (`antigravity-ide`) and older Antigravity builds; Windows, macOS and Linux.
