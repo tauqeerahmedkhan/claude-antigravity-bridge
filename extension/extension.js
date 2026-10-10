@@ -217,24 +217,34 @@ function activate(context) {
   }
   // Every task ends with a firm report-back requirement so Claude always gets a result.
   function buildPrompt(text, taskId) {
+    const reportFile = path.join(BRIDGE_DIR, "outbox", `${taskId || "report-" + Date.now()}.md`);
+    try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); } catch {}
     return [
       "[Task from Claude Code via agent-bridge]" + (taskId ? `  Task ID: ${taskId}` : ""),
       "",
       text,
       "",
       "---",
-      "REQUIRED when you finish (or if you get blocked or need a decision):",
-      "call the agent-bridge tool send_message with",
-      `  type: "result"${taskId ? `, reply_to: "${taskId}"` : ""}`,
-      "  text: a short report: what you did, files changed, build/test results, anything left or blocked.",
-      "Claude Code is waiting for this report, so do not skip it, even if the task failed.",
-      "Only use the agent-bridge send_message tool for this; never write to the ~/.agent-bridge files yourself.",
-      "If the agent-bridge tools are not available to you, say so in this chat instead.",
+      "REQUIRED when you finish (or if you get blocked or need a decision): write your report as a",
+      "plain text / markdown file at exactly this path (create it with your file tool or a command):",
+      `  ${reportFile}`,
+      "Include: what you did, files changed, build/test results, anything left or blocked.",
+      "Claude Code is waiting for this file, so always write it, even if the task failed.",
+      "Write ONLY that file; never edit messages.jsonl or other files in .agent-bridge.",
     ].join("\n");
   }
   const queue = [];
   let sending = false;
+  const recentlySent = new Map(); // text -> time, to avoid running the same task twice
   function enqueueForAgent(text, taskId) {
+    const now = Date.now();
+    for (const [t, at] of recentlySent) if (now - at > 5 * 60000) recentlySent.delete(t);
+    if (recentlySent.has(text)) {
+      log(`skipped duplicate task (same text sent ${Math.round((now - recentlySent.get(text)) / 1000)}s ago)`);
+      post(`⏭ Skipped a duplicate of a task delivered moments ago (not run twice)`, "progress");
+      return;
+    }
+    recentlySent.set(text, now);
     queue.push({ text, taskId });
     if (!sending) drainQueue();
   }

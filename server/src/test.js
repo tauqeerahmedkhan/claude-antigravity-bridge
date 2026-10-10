@@ -5,7 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn as spawnFn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
@@ -144,6 +144,36 @@ assert.match(got, /Fix A done/);
 assert.match(got, /Fix B done/);
 const agSees = await call(ag, "read_messages");
 assert.match(agSees, /Next task after the hand-written lines/);
+
+// ---- outbox: agent writes a plain-text report file instead of calling the tool ----
+sent = await call(claude, "send_message", { text: "Phase 8 task", wait_seconds: 0 });
+const id8 = sent.match(/task_id: ([\w-]+)/)[1];
+deliver("p8");
+const outbox = path.join(sandbox, "bus", "outbox");
+fs.mkdirSync(outbox, { recursive: true });
+setTimeout(() => fs.writeFileSync(path.join(outbox, `${id8}.md`), "Phase 8 done.\nFiles: rent_sheet.py\nTests: 12/12 passed"), 1000);
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: id8, wait_seconds: 15 }));
+console.log("outbox report   ->", w.status, "|", w.antigravity_report?.replace(/\n/g, " / "));
+assert.equal(w.status, "finished");
+assert.match(w.antigravity_report, /12\/12 passed/);
+assert.ok(!fs.existsSync(path.join(outbox, `${id8}.md`)), "report file moved to delivered/");
+// several readers racing on the same file must post it only once
+fs.writeFileSync(path.join(outbox, "race.md"), "race report");
+await new Promise((r) => setTimeout(r, 2200));
+const { execFileSync: ex } = await import("node:child_process");
+const readerScript = `import('${path.join(here, "store.js").replace(/\\/g, "/")}').then(s => s.readAll())`;
+const procs = [1, 2, 3, 4].map(() => new Promise((res) => {
+  const cp = (awaitImportSpawn())(process.execPath, ["--input-type=module", "-e", readerScript], { env, stdio: "ignore" });
+  cp.on("exit", res);
+}));
+function awaitImportSpawn() { return spawnFn; }
+await Promise.all(procs);
+const races = fs.readFileSync(busFile, "utf8").split("\n").filter((l) => l.includes("race report")).length;
+console.log("race            -> posted", races, "time(s)");
+assert.equal(races, 1);
+const diagLog = fs.readFileSync(path.join(sandbox, "bus", "server.log"), "utf8");
+assert.match(diagLog, /claude -> send_message/);
+assert.match(diagLog, /outbox: delivered/);
 
 await claude.close();
 await ag.close();

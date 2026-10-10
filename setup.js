@@ -290,8 +290,8 @@ Google Antigravity's agent may be working on this machine at the same time. You 
 `## Working alongside Claude Code (agent-bridge)
 Claude Code may be working on this machine at the same time. You are connected to it through the agent-bridge MCP tools.
 - At the start of each task and before editing shared files, call read_messages.
-- Use ONLY the agent-bridge MCP tools to talk to Claude. Never read or write the ~/.agent-bridge files directly; if the tools aren't available, tell the user.
-- Tasks from Claude arrive as "[Task from Claude Code via agent-bridge] Task ID: …". When you finish one (or get blocked), ALWAYS call send_message with type "result", reply_to set to that Task ID, and a short report: what you did, files changed, build/test results, anything left.
+- Tasks from Claude arrive as "[Task from Claude Code via agent-bridge] Task ID: …" and name a report file under ~/.agent-bridge/outbox/. When you finish one (or get blocked), ALWAYS write your report to that file: what you did, files changed, build/test results, anything left.
+- Never edit ~/.agent-bridge/messages.jsonl or other bridge files directly.
 - When you need Claude to do something, call send_message with type "message".`,
   };
   for (const [file, body] of Object.entries(rules)) {

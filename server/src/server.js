@@ -9,7 +9,23 @@ import * as store from "./store.js";
 const ME = (process.env.BRIDGE_AGENT || "claude").toLowerCase();
 const PEER = ME === "claude" ? "antigravity" : "claude";
 
-const server = new McpServer({ name: "agent-bridge", version: "1.1.0" });
+const server = new McpServer({ name: "agent-bridge", version: "1.0.0" });
+store.diag(`start as ${ME} (node ${process.version})`);
+
+// Log every tool call so a silent failure on either side shows up in ~/.agent-bridge/server.log
+const _register = server.registerTool.bind(server);
+server.registerTool = (name, def, handler) =>
+  _register(name, def, async (args, extra) => {
+    store.diag(`${ME} -> ${name} ${JSON.stringify(args).slice(0, 200)}`);
+    try {
+      const r = await handler(args, extra);
+      store.diag(`${ME} <- ${name} ok`);
+      return r;
+    } catch (e) {
+      store.diag(`${ME} <- ${name} ERROR ${e?.stack || e}`);
+      throw e;
+    }
+  });
 
 const text = (obj) => ({
   content: [
@@ -29,7 +45,7 @@ const MAX_WAIT_S = 55;
 async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
   const callStart = Date.now();
   const maxMs = Math.min(waitSeconds ?? 45, MAX_WAIT_S) * 1000;
-  const idleMs = (idleSeconds ?? 180) * 1000;
+  const idleMs = (idleSeconds ?? 900) * 1000;
   const progressToken = extra?._meta?.progressToken;
   let tick = 0;
   while (true) {
@@ -43,13 +59,16 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
     const question = [...fromAg].reverse().find((m) => m.type === "message" && Date.parse(m.ts) >= lastClaudeTs);
     const delivered = fromAg.some((m) => m.type === "progress" && /^📨 Delivered/.test(m.text));
     const steps = store.stepsSince(since);
-    const lastActivity = Math.max(0, ...steps.map((s) => Date.parse(s.ts)), ...fromAg.map((m) => Date.parse(m.ts)));
+    // Antigravity only logs background commands as steps, so also watch its conversation folder.
+    const convAct = store.conversationActivity();
+    const lastActivity = Math.max(0, ...steps.map((s) => Date.parse(s.ts)), ...fromAg.map((m) => Date.parse(m.ts)),
+      convAct > since ? convAct : 0);
     const now = Date.now();
 
     let status;
     if (result) status = "finished";
     else if (question) status = "needs_reply";
-    else if (!delivered && now - since > 60000) status = "not_delivered";
+    else if (!delivered && now - since > 180000) status = "not_delivered";
     else if (lastActivity && now - lastActivity >= idleMs) status = "idle";
     else if (now - callStart >= maxMs) status = "still_running";
 
@@ -68,8 +87,8 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
         next: {
           finished: "Show the user Antigravity's report (in full or a faithful summary), then continue.",
           needs_reply: "Show the user Antigravity's question, answer it with send_message, then wait again.",
-          not_delivered: "The task was not delivered (Antigravity may be closed). Tell the user.",
-          idle: "Antigravity went quiet without a report; it has probably finished. Tell the user and review the steps/files.",
+          not_delivered: "The task has not reached Antigravity after 3 minutes (is Antigravity open?). Tell the user. Do NOT resend it automatically: it may still be delivered and would then run twice.",
+          idle: "No sign of Antigravity working for a long time and no report. Ask the user to check Antigravity; do not assume it finished.",
           still_running: `Antigravity is still working. Give the user a one-line update, then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`,
         }[status],
       };
@@ -133,7 +152,7 @@ if (ME === "claude") {
         task_id: z.string().optional().describe("task_id from send_message (default: any new result)"),
         wait_seconds: z.number().int().min(5).max(MAX_WAIT_S).optional().describe("Max wait in this call, default 45"),
         idle_seconds: z.number().int().min(5).max(3600).optional()
-          .describe("Treat as done after this long with no agent activity, default 180"),
+          .describe("Report 'idle' after this long with no agent activity at all, default 900"),
       },
     },
     async ({ task_id, wait_seconds, idle_seconds }, extra) =>
@@ -145,7 +164,8 @@ if (ME === "claude") {
     {
       title: "Send a message or result to Claude Code",
       description:
-        "Send a message to Claude Code. When you finish a task Claude gave you (or get stuck), you MUST " +
+        "Send a message to Claude Code. (For task reports you can also simply write the report to " +
+        "~/.agent-bridge/outbox/<TaskID>.md, which is delivered the same way.) When you finish a task Claude gave you (or get stuck), you MUST " +
         "send type 'result' with reply_to set to that task's id and a short report: what you did, " +
         "files changed, build/test results, anything left or blocked. Use 'message' for questions, " +
         "'progress' for FYI updates.",
@@ -231,4 +251,15 @@ server.registerTool(
   }
 );
 
-await server.connect(new StdioServerTransport());
+// Exit promptly when the client goes away, so Antigravity/Claude can always restart us
+// (a lingering process made Antigravity's connector reload hang: "Close() did not return").
+const bye = (why) => { store.diag(`exit (${why})`); process.exit(0); };
+process.stdin.on("end", () => bye("stdin end"));
+process.stdin.on("close", () => bye("stdin close"));
+process.on("SIGTERM", () => bye("SIGTERM"));
+process.on("SIGINT", () => bye("SIGINT"));
+process.on("uncaughtException", (e) => { store.diag(`uncaught ${e?.stack || e}`); });
+const transport = new StdioServerTransport();
+transport.onclose = () => bye("transport closed");
+await server.connect(transport);
+store.diag(`${ME} connected`);

@@ -83,16 +83,18 @@ whatever failed."* Claude will:
    minute), with a one-line update each round.
 4. **Show you Antigravity's report** (what it did, files changed, test results) and carry on.
 
-Every task tells the agent to report back with a `result`. If you're busy with Claude meanwhile, the
-report also appears in Claude's context with your next message.
+Every task names a report file, `~/.agent-bridge/outbox/<TaskID>.md`, and tells the agent to write
+its report there when it's done. The bridge turns that file into a message for Claude. Writing a file
+is the agent's most reliable action, so this works even if Antigravity's connector tools are down.
+If you're busy with Claude meanwhile, the report also appears in Claude's context with your next message.
 
 | Wait status | Meaning |
 |---|---|
 | `finished` | The agent sent its report |
 | `needs_reply` | The agent asked a question; Claude shows it to you, answers, and waits again |
 | `still_running` | Still working; Claude checks again |
-| `idle` | Quiet for 3 min without a report, so it's probably done; Claude reviews the steps |
-| `not_delivered` | The task never reached Antigravity (is it open?) |
+| `idle` | No sign of Antigravity working for 15 min and no report; Claude asks you to check |
+| `not_delivered` | The task hasn't reached Antigravity after 3 min (is it open?); Claude won't resend on its own |
 
 Each status also lists the latest steps the agent ran (with pass/fail).
 
@@ -179,6 +181,7 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 
 | Problem | Fix |
 |---|---|
+| Want to see what the bridge did | Open `~/.agent-bridge/server.log`: every bridge call from Claude and Antigravity, and every outbox report delivered |
 | Antigravity says it replied, but Claude never gets it | Antigravity's agent doesn't have the bridge tools. Run `Install.bat` again (it registers them in `~/.gemini/config/mcp_config.json`), restart Antigravity, and check **Agent panel → … → MCP Servers** lists `agent-bridge` |
 | `agent-bridge` not in `/mcp` | Run `Install.bat` again, then fully quit Claude (tray icon → Quit) and reopen it |
 | Claude sees old Antigravity data | Check `lastActivity` in `get_antigravity_progress`; if it's stale, run `Install.bat` again to update the bridge |

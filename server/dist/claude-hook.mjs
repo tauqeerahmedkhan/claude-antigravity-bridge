@@ -5,14 +5,109 @@ import{createRequire as __cr}from'module';const require=__cr(import.meta.url);
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 var BRIDGE_DIR = process.env.AGENT_BRIDGE_DIR || path.join(os.homedir(), ".agent-bridge");
 var LOG_FILE = path.join(BRIDGE_DIR, "messages.jsonl");
+var OUTBOX_DIR = path.join(BRIDGE_DIR, "outbox");
+var SERVER_LOG = path.join(BRIDGE_DIR, "server.log");
+function diag(line) {
+  try {
+    ensureDir();
+    try {
+      if (fs.statSync(SERVER_LOG).size > 1e6) fs.renameSync(SERVER_LOG, SERVER_LOG + ".old");
+    } catch {
+    }
+    fs.appendFileSync(SERVER_LOG, `${(/* @__PURE__ */ new Date()).toISOString()} [${process.pid}] ${line}
+`);
+  } catch {
+  }
+}
 var BRAIN_DIRS = process.env.ANTIGRAVITY_BRAIN_DIR ? process.env.ANTIGRAVITY_BRAIN_DIR.split(path.delimiter) : ["antigravity-ide", "antigravity"].map((d) => path.join(os.homedir(), ".gemini", d, "brain"));
 var BRAIN_DIR = BRAIN_DIRS[0];
 function ensureDir() {
   fs.mkdirSync(BRIDGE_DIR, { recursive: true });
 }
+function post({ from, to = "all", type = "message", text, meta, replyTo }) {
+  if (!text || !String(text).trim()) throw new Error("text is required");
+  ensureDir();
+  let lead = "";
+  try {
+    const fd = fs.openSync(LOG_FILE, "r");
+    const { size } = fs.fstatSync(fd);
+    if (size > 0) {
+      const b = Buffer.alloc(1);
+      fs.readSync(fd, b, 0, 1, size - 1);
+      if (b[0] !== 10) lead = "\n";
+    }
+    fs.closeSync(fd);
+  } catch {
+  }
+  const msg = {
+    id: crypto.randomUUID(),
+    ts: (/* @__PURE__ */ new Date()).toISOString(),
+    from,
+    to,
+    type,
+    text: String(text),
+    ...replyTo ? { replyTo } : {},
+    ...meta ? { meta } : {}
+  };
+  fs.appendFileSync(LOG_FILE, lead + JSON.stringify(msg) + "\n", "utf8");
+  return msg;
+}
+function ingestOutbox() {
+  let names;
+  try {
+    names = fs.readdirSync(OUTBOX_DIR);
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const name of names) {
+    if (!/\.(md|txt)$/i.test(name)) continue;
+    const src = path.join(OUTBOX_DIR, name);
+    try {
+      if (Date.now() - fs.statSync(src).mtimeMs < 2e3) continue;
+    } catch {
+      continue;
+    }
+    const doneDir = path.join(OUTBOX_DIR, "delivered");
+    fs.mkdirSync(doneDir, { recursive: true });
+    const claimed = path.join(doneDir, `${Date.now()}-${process.pid}-${name}`);
+    try {
+      fs.renameSync(src, claimed);
+    } catch {
+      continue;
+    }
+    let text = "";
+    try {
+      text = fs.readFileSync(claimed, "utf8").replace(/^\uFEFF/, "").trim();
+    } catch {
+    }
+    if (!text) continue;
+    if (text.length > 2e4) text = text.slice(0, 2e4) + "\n\u2026(truncated)";
+    const stem = name.replace(/\.(md|txt)$/i, "");
+    const all = readLogOnly();
+    const task = all.find((m) => m.id === stem) || [...all].reverse().find((m) => m.from === "claude" && m.to === "antigravity" && m.type === "message");
+    post({ from: "antigravity", to: "claude", type: "result", text, replyTo: task?.id, meta: { via: "outbox", file: name } });
+    diag(`outbox: delivered ${name} as result for ${task?.id || "(no task)"}`);
+    n++;
+  }
+  return n;
+}
+function readLogOnly() {
+  try {
+    return parseLog(fs.readFileSync(LOG_FILE, "utf8"));
+  } catch {
+    return [];
+  }
+}
 function readAll() {
+  try {
+    ingestOutbox();
+  } catch (e) {
+    diag(`outbox error: ${e.message}`);
+  }
   let raw;
   try {
     raw = fs.readFileSync(LOG_FILE, "utf8");
@@ -219,6 +314,11 @@ function summarizeProgress(conversationId) {
       ...s.command ? { command: s.command } : {},
       ...s.exitCode !== void 0 ? { exitCode: s.exitCode } : {}
     })),
+    note: "Antigravity only records background commands (builds, test runs) as steps; file edits and quick commands don't appear, so quiet gaps are normal while it works.",
+    folderActivity: (() => {
+      const t = conversationActivity();
+      return t ? new Date(t).toISOString() : null;
+    })(),
     taskList: items.length ? {
       done: count("done"),
       doing: count("doing"),
@@ -228,6 +328,39 @@ function summarizeProgress(conversationId) {
     } : null,
     artifacts: conv.artifacts.map((a) => ({ name: a.name, updated: a.updated }))
   };
+}
+function conversationActivity(convLimit = 2) {
+  let newest = 0;
+  const walk = (dir, depth) => {
+    let ents = [];
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      try {
+        if (e.isDirectory()) {
+          if (depth < 3) walk(p, depth + 1);
+        } else {
+          const t = fs.statSync(p).mtimeMs;
+          if (t > newest) newest = t;
+        }
+      } catch {
+      }
+    }
+  };
+  for (const c of listConversations(convLimit)) {
+    for (const b of BRAIN_DIRS) {
+      const d = path.join(b, c.id);
+      if (fs.existsSync(d)) {
+        walk(d, 0);
+        break;
+      }
+    }
+  }
+  return newest;
 }
 
 // src/claude-hook.js

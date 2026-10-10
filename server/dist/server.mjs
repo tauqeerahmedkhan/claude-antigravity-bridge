@@ -18985,11 +18985,11 @@ var Protocol = class {
    *
    * The Protocol object assumes ownership of the Transport, replacing any callbacks that have already been set, and expects that it is the only user of the Transport instance going forward.
    */
-  async connect(transport) {
+  async connect(transport2) {
     if (this._transport) {
       throw new Error("Already connected to a transport. Call close() before connecting to a new transport, or use a separate Protocol instance per connection.");
     }
-    this._transport = transport;
+    this._transport = transport2;
     const _onclose = this.transport?.onclose;
     this._transport.onclose = () => {
       _onclose?.();
@@ -20627,8 +20627,8 @@ var McpServer = class {
    *
    * The `server` object assumes ownership of the Transport, replacing any callbacks that have already been set, and expects that it is the only user of the Transport instance going forward.
    */
-  async connect(transport) {
-    return await this.server.connect(transport);
+  async connect(transport2) {
+    return await this.server.connect(transport2);
   }
   /**
    * Closes the connection.
@@ -21503,6 +21503,20 @@ import os from "node:os";
 import crypto from "node:crypto";
 var BRIDGE_DIR = process.env.AGENT_BRIDGE_DIR || path.join(os.homedir(), ".agent-bridge");
 var LOG_FILE = path.join(BRIDGE_DIR, "messages.jsonl");
+var OUTBOX_DIR = path.join(BRIDGE_DIR, "outbox");
+var SERVER_LOG = path.join(BRIDGE_DIR, "server.log");
+function diag(line) {
+  try {
+    ensureDir();
+    try {
+      if (fs.statSync(SERVER_LOG).size > 1e6) fs.renameSync(SERVER_LOG, SERVER_LOG + ".old");
+    } catch {
+    }
+    fs.appendFileSync(SERVER_LOG, `${(/* @__PURE__ */ new Date()).toISOString()} [${process.pid}] ${line}
+`);
+  } catch {
+  }
+}
 var BRAIN_DIRS = process.env.ANTIGRAVITY_BRAIN_DIR ? process.env.ANTIGRAVITY_BRAIN_DIR.split(path.delimiter) : ["antigravity-ide", "antigravity"].map((d) => path.join(os.homedir(), ".gemini", d, "brain"));
 var BRAIN_DIR = BRAIN_DIRS[0];
 function ensureDir() {
@@ -21536,7 +21550,59 @@ function post({ from, to = "all", type = "message", text: text2, meta, replyTo }
   fs.appendFileSync(LOG_FILE, lead + JSON.stringify(msg) + "\n", "utf8");
   return msg;
 }
+function ingestOutbox() {
+  let names;
+  try {
+    names = fs.readdirSync(OUTBOX_DIR);
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const name of names) {
+    if (!/\.(md|txt)$/i.test(name)) continue;
+    const src = path.join(OUTBOX_DIR, name);
+    try {
+      if (Date.now() - fs.statSync(src).mtimeMs < 2e3) continue;
+    } catch {
+      continue;
+    }
+    const doneDir = path.join(OUTBOX_DIR, "delivered");
+    fs.mkdirSync(doneDir, { recursive: true });
+    const claimed = path.join(doneDir, `${Date.now()}-${process.pid}-${name}`);
+    try {
+      fs.renameSync(src, claimed);
+    } catch {
+      continue;
+    }
+    let text2 = "";
+    try {
+      text2 = fs.readFileSync(claimed, "utf8").replace(/^\uFEFF/, "").trim();
+    } catch {
+    }
+    if (!text2) continue;
+    if (text2.length > 2e4) text2 = text2.slice(0, 2e4) + "\n\u2026(truncated)";
+    const stem = name.replace(/\.(md|txt)$/i, "");
+    const all = readLogOnly();
+    const task = all.find((m) => m.id === stem) || [...all].reverse().find((m) => m.from === "claude" && m.to === "antigravity" && m.type === "message");
+    post({ from: "antigravity", to: "claude", type: "result", text: text2, replyTo: task?.id, meta: { via: "outbox", file: name } });
+    diag(`outbox: delivered ${name} as result for ${task?.id || "(no task)"}`);
+    n++;
+  }
+  return n;
+}
+function readLogOnly() {
+  try {
+    return parseLog(fs.readFileSync(LOG_FILE, "utf8"));
+  } catch {
+    return [];
+  }
+}
 function readAll() {
+  try {
+    ingestOutbox();
+  } catch (e) {
+    diag(`outbox error: ${e.message}`);
+  }
   let raw;
   try {
     raw = fs.readFileSync(LOG_FILE, "utf8");
@@ -21746,6 +21812,11 @@ function summarizeProgress(conversationId) {
       ...s.command ? { command: s.command } : {},
       ...s.exitCode !== void 0 ? { exitCode: s.exitCode } : {}
     })),
+    note: "Antigravity only records background commands (builds, test runs) as steps; file edits and quick commands don't appear, so quiet gaps are normal while it works.",
+    folderActivity: (() => {
+      const t = conversationActivity();
+      return t ? new Date(t).toISOString() : null;
+    })(),
     taskList: items.length ? {
       done: count("done"),
       doing: count("doing"),
@@ -21773,11 +21844,57 @@ function lastTaskFrom(from = "claude", to = "antigravity") {
   }
   return null;
 }
+function conversationActivity(convLimit = 2) {
+  let newest = 0;
+  const walk = (dir, depth) => {
+    let ents = [];
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      try {
+        if (e.isDirectory()) {
+          if (depth < 3) walk(p, depth + 1);
+        } else {
+          const t = fs.statSync(p).mtimeMs;
+          if (t > newest) newest = t;
+        }
+      } catch {
+      }
+    }
+  };
+  for (const c of listConversations(convLimit)) {
+    for (const b of BRAIN_DIRS) {
+      const d = path.join(b, c.id);
+      if (fs.existsSync(d)) {
+        walk(d, 0);
+        break;
+      }
+    }
+  }
+  return newest;
+}
 
 // src/server.js
 var ME = (process.env.BRIDGE_AGENT || "claude").toLowerCase();
 var PEER = ME === "claude" ? "antigravity" : "claude";
-var server = new McpServer({ name: "agent-bridge", version: "1.1.0" });
+var server = new McpServer({ name: "agent-bridge", version: "1.0.0" });
+diag(`start as ${ME} (node ${process.version})`);
+var _register = server.registerTool.bind(server);
+server.registerTool = (name, def, handler) => _register(name, def, async (args, extra) => {
+  diag(`${ME} -> ${name} ${JSON.stringify(args).slice(0, 200)}`);
+  try {
+    const r = await handler(args, extra);
+    diag(`${ME} <- ${name} ok`);
+    return r;
+  } catch (e) {
+    diag(`${ME} <- ${name} ERROR ${e?.stack || e}`);
+    throw e;
+  }
+});
 var text = (obj) => ({
   content: [
     { type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }
@@ -21789,7 +21906,7 @@ var MAX_WAIT_S = 55;
 async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
   const callStart = Date.now();
   const maxMs = Math.min(waitSeconds ?? 45, MAX_WAIT_S) * 1e3;
-  const idleMs = (idleSeconds ?? 180) * 1e3;
+  const idleMs = (idleSeconds ?? 900) * 1e3;
   const progressToken = extra?._meta?.progressToken;
   let tick = 0;
   while (true) {
@@ -21803,12 +21920,18 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
     const question = [...fromAg].reverse().find((m) => m.type === "message" && Date.parse(m.ts) >= lastClaudeTs);
     const delivered = fromAg.some((m) => m.type === "progress" && /^📨 Delivered/.test(m.text));
     const steps = stepsSince(since);
-    const lastActivity = Math.max(0, ...steps.map((s) => Date.parse(s.ts)), ...fromAg.map((m) => Date.parse(m.ts)));
+    const convAct = conversationActivity();
+    const lastActivity = Math.max(
+      0,
+      ...steps.map((s) => Date.parse(s.ts)),
+      ...fromAg.map((m) => Date.parse(m.ts)),
+      convAct > since ? convAct : 0
+    );
     const now = Date.now();
     let status;
     if (result) status = "finished";
     else if (question) status = "needs_reply";
-    else if (!delivered && now - since > 6e4) status = "not_delivered";
+    else if (!delivered && now - since > 18e4) status = "not_delivered";
     else if (lastActivity && now - lastActivity >= idleMs) status = "idle";
     else if (now - callStart >= maxMs) status = "still_running";
     if (status) {
@@ -21825,8 +21948,8 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
         next: {
           finished: "Show the user Antigravity's report (in full or a faithful summary), then continue.",
           needs_reply: "Show the user Antigravity's question, answer it with send_message, then wait again.",
-          not_delivered: "The task was not delivered (Antigravity may be closed). Tell the user.",
-          idle: "Antigravity went quiet without a report; it has probably finished. Tell the user and review the steps/files.",
+          not_delivered: "The task has not reached Antigravity after 3 minutes (is Antigravity open?). Tell the user. Do NOT resend it automatically: it may still be delivered and would then run twice.",
+          idle: "No sign of Antigravity working for a long time and no report. Ask the user to check Antigravity; do not assume it finished.",
           still_running: `Antigravity is still working. Give the user a one-line update, then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`
         }[status]
       };
@@ -21884,7 +22007,7 @@ Call wait_for_antigravity with task_id ${m.id} to get the report.` : ""));
       inputSchema: {
         task_id: external_exports.string().optional().describe("task_id from send_message (default: any new result)"),
         wait_seconds: external_exports.number().int().min(5).max(MAX_WAIT_S).optional().describe("Max wait in this call, default 45"),
-        idle_seconds: external_exports.number().int().min(5).max(3600).optional().describe("Treat as done after this long with no agent activity, default 180")
+        idle_seconds: external_exports.number().int().min(5).max(3600).optional().describe("Report 'idle' after this long with no agent activity at all, default 900")
       }
     },
     async ({ task_id, wait_seconds, idle_seconds }, extra) => text(await waitForTask({ taskId: task_id, waitSeconds: wait_seconds, idleSeconds: idle_seconds, extra }))
@@ -21894,7 +22017,7 @@ Call wait_for_antigravity with task_id ${m.id} to get the report.` : ""));
     "send_message",
     {
       title: "Send a message or result to Claude Code",
-      description: "Send a message to Claude Code. When you finish a task Claude gave you (or get stuck), you MUST send type 'result' with reply_to set to that task's id and a short report: what you did, files changed, build/test results, anything left or blocked. Use 'message' for questions, 'progress' for FYI updates.",
+      description: "Send a message to Claude Code. (For task reports you can also simply write the report to ~/.agent-bridge/outbox/<TaskID>.md, which is delivered the same way.) When you finish a task Claude gave you (or get stuck), you MUST send type 'result' with reply_to set to that task's id and a short report: what you did, files changed, build/test results, anything left or blocked. Use 'message' for questions, 'progress' for FYI updates.",
       inputSchema: {
         text: external_exports.string().min(1).describe("The message or result report"),
         type: external_exports.enum(["message", "progress", "result"]).optional().describe("'result' = task finished/blocked report; 'message' (default) = needs Claude's attention; 'progress' = FYI"),
@@ -21962,4 +22085,18 @@ server.registerTool(
     return text(a.content);
   }
 );
-await server.connect(new StdioServerTransport());
+var bye = (why) => {
+  diag(`exit (${why})`);
+  process.exit(0);
+};
+process.stdin.on("end", () => bye("stdin end"));
+process.stdin.on("close", () => bye("stdin close"));
+process.on("SIGTERM", () => bye("SIGTERM"));
+process.on("SIGINT", () => bye("SIGINT"));
+process.on("uncaughtException", (e) => {
+  diag(`uncaught ${e?.stack || e}`);
+});
+var transport = new StdioServerTransport();
+transport.onclose = () => bye("transport closed");
+await server.connect(transport);
+diag(`${ME} connected`);
