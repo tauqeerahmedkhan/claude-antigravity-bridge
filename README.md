@@ -83,6 +83,11 @@ whatever failed."* Claude will:
    minute), with a one-line update each round.
 4. **Show you Antigravity's report** (what it did, files changed, test results) and carry on.
 
+**When Claude isn't waiting** (it finished its turn), the bridge wakes it on Windows: about 25 s
+after Antigravity's report arrives, it pastes a short note into the same Claude chat and sends it,
+and Claude picks up the report and carries on. It only types if that chat is open, Claude isn't
+replying and the message box is empty; otherwise you get a notification instead.
+
 Every task names a report file, `~/.agent-bridge/outbox/<TaskID>.md`, and tells the agent to write
 its report there when it's done. The bridge turns that file into a message for Claude. Writing a file
 is the agent's most reliable action, so this works even if Antigravity's connector tools are down.
@@ -149,6 +154,7 @@ reports; `reply_to` defaults to Claude's latest task) and `read_messages`.
 | Setting | Default | |
 |---|---|---|
 | `agentBridge.autoSendToAgent` | `true` | Send Claude's messages straight into the agent chat. Turn off to get a popup with a **Send to agent** button instead |
+| `agentBridge.wakeClaude` | `true` | Windows: wake the Claude chat that sent the task when Antigravity's report is ready (only if that chat is open, idle and its message box is empty) |
 | `agentBridge.keyboardDelivery` | `true` | Windows: if Antigravity doesn't accept a task directly, bring it to the front and paste it into the agent chat (Ctrl+V, Enter). Only types when Antigravity is confirmed to be the active window |
 | `agentBridge.autoReportProgress` | `true` | Post each finished agent step to Claude |
 | `agentBridge.notifications` | `true` | Show bridge notifications |

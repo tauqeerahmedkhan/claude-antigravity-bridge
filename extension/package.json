@@ -64,6 +64,11 @@
           "type": "boolean",
           "default": true,
           "description": "Windows: if Antigravity doesn't accept a task directly, bring Antigravity to the front and paste it into the agent chat (Ctrl+V, Enter). Only types when Antigravity is confirmed to be the active window."
+        },
+        "agentBridge.wakeClaude": {
+          "type": "boolean",
+          "default": true,
+          "description": "Windows: when Antigravity's report is ready and Claude hasn't picked it up within ~25 s, paste a short note into the same Claude desktop chat and send it so Claude continues. Only if that chat is open, Claude isn't replying, and the message box is empty; otherwise shows a notification."
         }
       }
     }

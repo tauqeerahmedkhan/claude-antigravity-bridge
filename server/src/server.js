@@ -37,6 +37,25 @@ const fmt = (m) =>
   `[${m.ts.slice(11, 19)}] ${m.from}${m.type !== "message" ? ` (${m.type})` : ""}: ${m.text}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Windows: read the title of the chat open in the Claude desktop app, so the Antigravity
+// extension can later wake *this* chat (and only this one) when the report arrives.
+import { execFile } from "node:child_process";
+function claudeChatTitle() {
+  if (process.platform !== "win32") return Promise.resolve(null);
+  const ps = [
+    "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
+    "$A=[System.Windows.Automation.AutomationElement]",
+    "$p=Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName -eq 'claude' } | Select-Object -First 1",
+    "if(-not $p){exit}",
+    "$root=$A::FromHandle($p.MainWindowHandle)",
+    "$c=New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty,[System.Windows.Automation.ControlType]::Document)",
+    "foreach($d in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$c)){ if($d.Current.Name -like '* - Claude*'){ $d.Current.Name; break } }",
+  ].join("; ");
+  return new Promise((resolve) =>
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+      { timeout: 8000, windowsHide: true }, (err, out) => resolve(err ? null : (String(out).trim().split(/\r?\n/)[0] || null))));
+}
+
 // The Claude desktop app cancels MCP tool calls after ~60 s, so every wait is short and
 // Claude polls with repeated calls. All state is derived from the log, so nothing is lost
 // between calls (or if the prompt hook already showed a message).
@@ -131,7 +150,9 @@ if (ME === "claude") {
     },
     async ({ text: t, type, wait_seconds }, extra) => {
       const kind = type || "message";
-      const m = store.post({ from: ME, to: PEER, type: kind, text: t });
+      const chat = kind === "message" ? await claudeChatTitle() : null;
+      if (chat) store.diag(`task from Claude chat: ${chat}`);
+      const m = store.post({ from: ME, to: PEER, type: kind, text: t, ...(chat ? { meta: { claudeChat: chat } } : {}) });
       const head = `Sent to Antigravity (task_id: ${m.id}). Prompt delivered:\n---\n${t}\n---`;
       if (kind !== "message" || wait_seconds === 0) {
         return text(head + (kind === "message" ? `\nCall wait_for_antigravity with task_id ${m.id} to get the report.` : ""));
@@ -182,7 +203,7 @@ if (ME === "claude") {
     },
     async ({ text: t, type, reply_to }) => {
       const kind = type || "message";
-      const replyTo = reply_to || (kind === "result" ? store.lastTaskFrom("claude", "antigravity")?.id : undefined);
+      const replyTo = reply_to || (kind !== "progress" ? store.lastTaskFrom("claude", "antigravity")?.id : undefined);
       const m = store.post({ from: ME, to: PEER, type: kind, text: t, replyTo });
       return text(`Sent to Claude (${m.id})${replyTo ? ` as ${kind} for task ${replyTo}` : ""}.`);
     }

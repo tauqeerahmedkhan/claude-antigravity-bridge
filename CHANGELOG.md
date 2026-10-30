@@ -23,6 +23,11 @@
 - Duplicate tasks sent within 5 minutes are skipped, so a task never runs twice.
 
 ### Antigravity → Claude
+- **Wakes Claude when the report is ready (Windows):** if Claude hasn't picked up Antigravity's
+  report (or question) within ~25 s, the extension pastes a short note into the *same* Claude
+  desktop chat and sends it, so Claude continues on its own. It only does this if that chat is
+  open, Claude isn't mid-reply and the message box is empty; otherwise it shows a notification.
+  Your clipboard is restored afterwards. Setting: `agentBridge.wakeClaude`.
 - **Reports via an outbox file:** every task names a report file
   (`~/.agent-bridge/outbox/<TaskID>.md`). Antigravity's agent writes its report there (what it did,
   files changed, test results), and the bridge delivers it to Claude. Writing a file is the agent's

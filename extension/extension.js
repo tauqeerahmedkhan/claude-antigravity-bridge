@@ -91,10 +91,65 @@ if ($btn -and $btn.Current.IsEnabled) {
   if ($f -and $f.Current.Name -eq 'Message input') { [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); 'SENT:enter' } else { 'PASTED_NOT_SENT' }
 }
 `;
+// Wake Claude: paste a short note into the Claude desktop app's chat box and press Enter, but only
+// if (1) the open chat is the one that sent the task, (2) Claude isn't mid-reply, (3) the box is
+// empty (never overwrite the user's draft) and (4) the box itself has keyboard focus.
+// The user's clipboard is restored afterwards.
+const PS_WAKE = String.raw`
+param([string]$Title, [string]$MsgFile)
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class AbC {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+}
+"@
+$A = [System.Windows.Automation.AutomationElement]
+$TS = [System.Windows.Automation.TreeScope]::Descendants
+$p = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName -eq 'claude' } | Select-Object -First 1
+if (-not $p) { 'NOCLAUDE'; exit }
+$h = $p.MainWindowHandle
+$root = $A::FromHandle($h)
+$docCond = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Document)
+$current = ($root.FindAll($TS, $docCond) | Where-Object { $_.Current.Name -like '* - Claude*' } | Select-Object -First 1).Current.Name
+if ($current -ne $Title) { "WRONGCHAT:$current"; exit }
+$btnCond = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+$busy = $root.FindAll($TS, $btnCond) | Where-Object { $_.Current.Name -match '^(Stop|Interrupt|Cancel response)' } | Select-Object -First 1
+if ($busy) { 'BUSY'; exit }
+$box = $root.FindFirst($TS, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Prompt')))
+if (-not $box) { 'NOPROMPT'; exit }
+$tp = $null
+if ($box.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$tp)) {
+  if ($tp.DocumentRange.GetText(-1).Trim().Length -gt 0) { 'DRAFT'; exit }
+}
+if ([AbC]::IsIconic($h)) { [AbC]::ShowWindow($h, 9) | Out-Null }
+[AbC]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [AbC]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+[AbC]::SetForegroundWindow($h) | Out-Null
+(New-Object -ComObject WScript.Shell).AppActivate($p.Id) | Out-Null
+Start-Sleep -Milliseconds 400
+try { $box.SetFocus() } catch { "FOCUSERROR:$($_.Exception.Message)"; exit }
+Start-Sleep -Milliseconds 300
+$f = $A::FocusedElement
+if (-not $f -or $f.Current.Name -ne 'Prompt') { "NOTFOCUSED:$($f.Current.Name)"; exit }
+$old = $null; try { $old = Get-Clipboard -Raw } catch {}
+Set-Clipboard -Value (Get-Content -Raw -LiteralPath $MsgFile)
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 500
+$f = $A::FocusedElement
+if (-not $f -or $f.Current.Name -ne 'Prompt') { if ($old) { Set-Clipboard -Value $old }; 'PASTED_NOT_SENT'; exit }
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+Start-Sleep -Milliseconds 300
+if ($old) { Set-Clipboard -Value $old }
+'SENT'
+`;
+
 function runPowerShell(script, args) {
   return new Promise((resolve) => {
     const { execFile } = require("child_process");
-    const file = path.join(BRIDGE_DIR, "paste-to-agent.ps1");
+    const file = path.join(BRIDGE_DIR, script === PS_WAKE ? "wake-claude.ps1" : "paste-to-agent.ps1");
     try { fs.writeFileSync(file, script, "utf8"); } catch (e) { return resolve(`ERR ${e.message}`); }
     execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file, ...args],
       { timeout: 20000, windowsHide: true }, (err, stdout, stderr) => {
@@ -220,10 +275,52 @@ function activate(context) {
     lastAgentActivity = Date.now();
     if (state === "idle" || state === "done") setState("working", "Antigravity agent is running steps");
   }
-  function reportSeen(what) {
+  function reportSeen(what, taskId, kind = "report") {
     activeTask = null;
     setState("sending", what, 5000, "done");
     setTimeout(() => { if (state === "done") setState("done", what, 8000); }, 5100);
+    if (taskId) scheduleWake(taskId, kind);
+  }
+
+  // ----- wake Claude when a report is ready and Claude hasn't picked it up -----
+  const wakeScheduled = new Set();
+  function claudeHasRead(taskId) {
+    // report files are moved to outbox/delivered the moment Claude reads the bridge
+    try { if (fs.readdirSync(path.join(BRIDGE_DIR, "outbox")).some((n) => n.startsWith(taskId))) return false; } catch {}
+    try { if (fs.readdirSync(path.join(BRIDGE_DIR, "outbox", "delivered")).some((n) => n.includes(taskId))) return true; } catch {}
+    const msgs = readAll();
+    let cur = 0;
+    try { cur = JSON.parse(fs.readFileSync(path.join(BRIDGE_DIR, "cursor-claude.json"), "utf8")).index || 0; } catch {}
+    const i = msgs.findIndex((m) => m.from === ME && (m.type === "result" || m.type === "message") && m.replyTo === taskId);
+    return i !== -1 && i < cur;
+  }
+  function scheduleWake(taskId, kind) {
+    if (!cfg().get("wakeClaude", true) || wakeScheduled.has(taskId)) return;
+    wakeScheduled.add(taskId);
+    setTimeout(() => wakeClaude(taskId, kind).catch((e) => diag(`wake error: ${e?.message || e}`)), 25000);
+  }
+  async function wakeClaude(taskId, kind) {
+    if (claudeHasRead(taskId)) { diag(`wake ${taskId}: Claude already read it`); return; }
+    const task = readAll().find((m) => m.id === taskId);
+    const title = task?.meta?.claudeChat;
+    const id8 = taskId.slice(0, 8);
+    const note = kind === "question"
+      ? `[agent-bridge] Antigravity has a question about task ${id8}. Call wait_for_antigravity with task_id ${taskId}, answer it, and continue.`
+      : `[agent-bridge] Antigravity finished task ${id8} and its report is ready. Call wait_for_antigravity with task_id ${taskId}, show me the report, and continue.`;
+    let r = "NOTITLE";
+    if (process.platform === "win32" && title) {
+      const msgFile = path.join(BRIDGE_DIR, "wake-message.txt");
+      fs.writeFileSync(msgFile, note, "utf8");
+      r = await runPowerShell(PS_WAKE, [title, msgFile]);
+    }
+    diag(`wake ${taskId}: ${r}`);
+    if (!r.startsWith("SENT")) {
+      const why = { NOTITLE: "", BUSY: " (Claude is busy replying)", DRAFT: " (you have a draft in Claude's box)" }[r.split(":")[0]]
+        ?? (r.startsWith("WRONGCHAT") ? ` (a different Claude chat is open: expected "${title}")` : "");
+      vscode.window.showInformationMessage(
+        `Antigravity's ${kind} for task ${id8} is ready. Tell Claude to check the bridge${why}.`, "Copy note for Claude"
+      ).then((c) => { if (c) vscode.env.clipboard.writeText(note); });
+    }
   }
   renderBar();
   bar.show();
@@ -500,7 +597,9 @@ function activate(context) {
   try { fs.mkdirSync(OUTBOX, { recursive: true }); } catch {}
   try {
     const ow = fs.watch(OUTBOX, (_e, name) => {
-      if (name && /\.(md|txt)$/i.test(String(name)) && fs.existsSync(path.join(OUTBOX, String(name)))) reportSeen(`Report: ${name}`);
+      if (name && /\.(md|txt)$/i.test(String(name)) && fs.existsSync(path.join(OUTBOX, String(name)))) {
+        reportSeen(`Report: ${name}`, String(name).replace(/\.(md|txt)$/i, ""));
+      }
     });
     context.subscriptions.push({ dispose: () => ow.close() });
   } catch (e) { log(`outbox watch failed: ${e.message}`); }
@@ -510,7 +609,7 @@ function activate(context) {
     if (scanned > msgs.length) scanned = 0;
     for (const m of msgs.slice(scanned)) {
       if (m.from === ME && (m.type === "result" || (m.type === "message" && !/^[🔧📨⚠⏭📝]/u.test(m.text)))) {
-        reportSeen(m.text.slice(0, 80));
+        reportSeen(m.text.slice(0, 80), m.replyTo || null, m.type === "message" ? "question" : "report");
       }
     }
     scanned = msgs.length;

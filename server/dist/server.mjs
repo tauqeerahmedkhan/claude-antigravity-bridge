@@ -21879,6 +21879,7 @@ function conversationActivity(convLimit = 2) {
 }
 
 // src/server.js
+import { execFile } from "node:child_process";
 var ME = (process.env.BRIDGE_AGENT || "claude").toLowerCase();
 var PEER = ME === "claude" ? "antigravity" : "claude";
 var server = new McpServer({ name: "agent-bridge", version: "1.0.0" });
@@ -21902,6 +21903,24 @@ var text = (obj) => ({
 });
 var fmt = (m) => `[${m.ts.slice(11, 19)}] ${m.from}${m.type !== "message" ? ` (${m.type})` : ""}: ${m.text}`;
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function claudeChatTitle() {
+  if (process.platform !== "win32") return Promise.resolve(null);
+  const ps = [
+    "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
+    "$A=[System.Windows.Automation.AutomationElement]",
+    "$p=Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName -eq 'claude' } | Select-Object -First 1",
+    "if(-not $p){exit}",
+    "$root=$A::FromHandle($p.MainWindowHandle)",
+    "$c=New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty,[System.Windows.Automation.ControlType]::Document)",
+    "foreach($d in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$c)){ if($d.Current.Name -like '* - Claude*'){ $d.Current.Name; break } }"
+  ].join("; ");
+  return new Promise((resolve) => execFile(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+    { timeout: 8e3, windowsHide: true },
+    (err, out) => resolve(err ? null : String(out).trim().split(/\r?\n/)[0] || null)
+  ));
+}
 var MAX_WAIT_S = 55;
 async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
   const callStart = Date.now();
@@ -21987,7 +22006,9 @@ if (ME === "claude") {
     },
     async ({ text: t, type, wait_seconds }, extra) => {
       const kind = type || "message";
-      const m = post({ from: ME, to: PEER, type: kind, text: t });
+      const chat = kind === "message" ? await claudeChatTitle() : null;
+      if (chat) diag(`task from Claude chat: ${chat}`);
+      const m = post({ from: ME, to: PEER, type: kind, text: t, ...chat ? { meta: { claudeChat: chat } } : {} });
       const head = `Sent to Antigravity (task_id: ${m.id}). Prompt delivered:
 ---
 ${t}
@@ -22027,7 +22048,7 @@ Call wait_for_antigravity with task_id ${m.id} to get the report.` : ""));
     },
     async ({ text: t, type, reply_to }) => {
       const kind = type || "message";
-      const replyTo = reply_to || (kind === "result" ? lastTaskFrom("claude", "antigravity")?.id : void 0);
+      const replyTo = reply_to || (kind !== "progress" ? lastTaskFrom("claude", "antigravity")?.id : void 0);
       const m = post({ from: ME, to: PEER, type: kind, text: t, replyTo });
       return text(`Sent to Claude (${m.id})${replyTo ? ` as ${kind} for task ${replyTo}` : ""}.`);
     }
