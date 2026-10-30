@@ -9,6 +9,10 @@
   and checks Antigravity's conversation files to confirm the prompt arrived (retrying once). If it
   can't confirm, the prompt goes on the clipboard and Claude is told it was *not* delivered.
   (Antigravity 1.107's agent panel silently drops prompts sent before it has finished loading.)
+- Windows keyboard fallback for Antigravity 1.107+: if the panel doesn't accept the prompt, the
+  extension brings Antigravity to the front and pastes it into the agent chat with Ctrl+V, Enter,
+  but only after confirming Antigravity is the active window. Setting: `agentBridge.keyboardDelivery`.
+- Opening the agent chat no longer closes the panel when it's already open.
 - Claude shows you the full prompt in the chat, then sends it. It lands in Antigravity's agent chat
   and is submitted automatically (via Antigravity's built-in `antigravity.sendPromptToAgentPanel`),
   with a clipboard fallback if that command isn't available.

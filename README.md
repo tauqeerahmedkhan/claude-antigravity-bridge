@@ -147,6 +147,7 @@ reports; `reply_to` defaults to Claude's latest task) and `read_messages`.
 | Setting | Default | |
 |---|---|---|
 | `agentBridge.autoSendToAgent` | `true` | Send Claude's messages straight into the agent chat. Turn off to get a popup with a **Send to agent** button instead |
+| `agentBridge.keyboardDelivery` | `true` | Windows: if Antigravity doesn't accept a task directly, bring it to the front and paste it into the agent chat (Ctrl+V, Enter). Only types when Antigravity is confirmed to be the active window |
 | `agentBridge.autoReportProgress` | `true` | Post each finished agent step to Claude |
 | `agentBridge.notifications` | `true` | Show bridge notifications |
 

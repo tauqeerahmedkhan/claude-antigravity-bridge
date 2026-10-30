@@ -37,6 +37,52 @@ function diag(line) {
   try { fs.appendFileSync(path.join(BRIDGE_DIR, "server.log"), `${new Date().toISOString()} [ext ${process.pid}] ${line}\n`); } catch {}
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Keyboard delivery (Windows): bring this Antigravity window to the front, and only if it is
+// confirmed to be the foreground window, paste (Ctrl+V) and press Enter in the focused agent
+// chat box. Never types into any other app.
+const PS_PASTE = String.raw`
+param([string]$TitleHint)
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class AbW {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+}
+"@
+$wins = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*Antigravity*' }
+$win = $wins | Where-Object { $TitleHint -and $_.MainWindowTitle -like "*$TitleHint*" } | Select-Object -First 1
+if (-not $win) { $win = $wins | Select-Object -First 1 }
+if (-not $win) { 'NOWINDOW'; exit }
+$h = $win.MainWindowHandle
+if ([AbW]::IsIconic($h)) { [AbW]::ShowWindow($h, 9) | Out-Null }
+[AbW]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [AbW]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+[AbW]::SetForegroundWindow($h) | Out-Null
+Start-Sleep -Milliseconds 500
+$fg = [AbW]::GetForegroundWindow(); [uint32]$fpid = 0; [AbW]::GetWindowThreadProcessId($fg, [ref]$fpid) | Out-Null
+$name = (Get-Process -Id $fpid -ErrorAction SilentlyContinue).ProcessName
+if ($name -notlike '*Antigravity*') { "NOTFOREGROUND:$name"; exit }
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 400
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+'SENT'
+`;
+function runPowerShell(script, args) {
+  return new Promise((resolve) => {
+    const { execFile } = require("child_process");
+    const file = path.join(BRIDGE_DIR, "paste-to-agent.ps1");
+    try { fs.writeFileSync(file, script, "utf8"); } catch (e) { return resolve(`ERR ${e.message}`); }
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file, ...args],
+      { timeout: 20000, windowsHide: true }, (err, stdout, stderr) => {
+        resolve(((stdout || "") + (err ? ` ERR ${err.message}` : "")).trim());
+      });
+  });
+}
 const ME = "antigravity";
 
 // ---------- bus (same file format as bridge-mcp/store.js) ----------
@@ -280,8 +326,13 @@ function activate(context) {
         // The agent panel only receives the message if it is open and mounted, so open it,
         // give it time to load, send, and confirm by watching the conversation files.
         // Second attempt waits longer for a slow panel.
-        for (const [attempt, settleMs] of [[1, 1200], [2, 3500]]) {
+        const kb = process.platform === "win32" && cfg().get("keyboardDelivery", true);
+        const attempts = kb ? [[1, 1200]] : [[1, 1200], [2, 3500]]; // keyboard path follows on Windows
+        for (const [attempt, settleMs] of attempts) {
           const before = conversationStamp();
+          // Focus the editor first: toggleChatFocus *closes* the panel if the chat already has focus.
+          try { await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup"); } catch {}
+          await sleep(200);
           try { await vscode.commands.executeCommand("antigravity.toggleChatFocus"); } catch (e) { diag(`toggleChatFocus failed: ${e?.message || e}`); }
           await sleep(settleMs);
           try {
@@ -297,6 +348,26 @@ function activate(context) {
           }
           diag(`send attempt ${attempt} for task ${taskId}: ${delivered ? "confirmed" : "not confirmed"}`);
           if (delivered) break;
+        }
+      }
+      // Antigravity 1.107+: the send command no longer reaches the agent panel, so paste it
+      // into the agent chat box the way a person would.
+      if (!delivered && process.platform === "win32" && cfg().get("keyboardDelivery", true)) {
+        const before = conversationStamp();
+        await vscode.env.clipboard.writeText(prompt);
+        try { await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup"); } catch {}
+        await sleep(300);
+        try { await vscode.commands.executeCommand("antigravity.toggleChatFocus"); } catch {}
+        await sleep(1200);
+        const r = await runPowerShell(PS_PASTE, [vscode.workspace.name || ""]);
+        diag(`keyboard delivery for task ${taskId}: ${r}`);
+        if (r.startsWith("SENT")) {
+          for (let i = 0; i < 24 && !delivered; i++) {
+            await sleep(500);
+            const now = conversationStamp();
+            if (now.newest > before.newest || now.count > before.count) delivered = true;
+          }
+          diag(`keyboard delivery for task ${taskId}: ${delivered ? "confirmed" : "not confirmed"}`);
         }
       }
       if (delivered) {

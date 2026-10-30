@@ -59,6 +59,11 @@
           "type": "boolean",
           "default": true,
           "description": "Send messages from Claude Code straight into the Antigravity agent chat and submit them automatically. Turn off to get a popup with a 'Send to agent' button instead."
+        },
+        "agentBridge.keyboardDelivery": {
+          "type": "boolean",
+          "default": true,
+          "description": "Windows: if Antigravity doesn't accept a task directly, bring Antigravity to the front and paste it into the agent chat (Ctrl+V, Enter). Only types when Antigravity is confirmed to be the active window."
         }
       }
     }
