@@ -43,19 +43,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // chat box. Never types into any other app.
 const PS_PASTE = String.raw`
 param([string]$TitleHint)
-Add-Type -AssemblyName System.Windows.Forms
+# Paste the prompt (already on the clipboard) into Antigravity's agent chat box and click Send.
+# Every step is verified through Windows UI Automation; nothing is typed unless the agent's
+# "Message input" box itself has keyboard focus, so keys can never land in a code file or another app.
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public class AbW {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 }
 "@
-$wins = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*Antigravity*' }
+$A = [System.Windows.Automation.AutomationElement]
+$wins = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName -like '*Antigravity*' }
 $win = $wins | Where-Object { $TitleHint -and $_.MainWindowTitle -like "*$TitleHint*" } | Select-Object -First 1
 if (-not $win) { $win = $wins | Select-Object -First 1 }
 if (-not $win) { 'NOWINDOW'; exit }
@@ -63,14 +65,31 @@ $h = $win.MainWindowHandle
 if ([AbW]::IsIconic($h)) { [AbW]::ShowWindow($h, 9) | Out-Null }
 [AbW]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [AbW]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
 [AbW]::SetForegroundWindow($h) | Out-Null
-Start-Sleep -Milliseconds 500
-$fg = [AbW]::GetForegroundWindow(); [uint32]$fpid = 0; [AbW]::GetWindowThreadProcessId($fg, [ref]$fpid) | Out-Null
-$name = (Get-Process -Id $fpid -ErrorAction SilentlyContinue).ProcessName
-if ($name -notlike '*Antigravity*') { "NOTFOREGROUND:$name"; exit }
-[System.Windows.Forms.SendKeys]::SendWait('^v')
+(New-Object -ComObject WScript.Shell).AppActivate($win.Id) | Out-Null
 Start-Sleep -Milliseconds 400
-[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-'SENT'
+$root = $A::FromHandle($h)
+$byName = { param($n) $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $n))) }
+$box = & $byName 'Message input'
+if (-not $box) { 'NOINPUT'; exit }
+try { $box.SetFocus() } catch { "FOCUSERROR:$($_.Exception.Message)"; exit }
+Start-Sleep -Milliseconds 300
+$f = $A::FocusedElement
+if (-not $f -or $f.Current.Name -ne 'Message input') { "NOTFOCUSED:$($f.Current.Name)"; exit }
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+# wait for the Send button to become enabled (it's disabled while the box is empty)
+$btn = $null
+for ($i = 0; $i -lt 20; $i++) {
+  Start-Sleep -Milliseconds 150
+  $btn = & $byName 'Send message'
+  if ($btn -and $btn.Current.IsEnabled) { break }
+}
+if ($btn -and $btn.Current.IsEnabled) {
+  $ip = $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+  $ip.Invoke(); 'SENT:button'
+} else {
+  $f = $A::FocusedElement
+  if ($f -and $f.Current.Name -eq 'Message input') { [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); 'SENT:enter' } else { 'PASTED_NOT_SENT' }
+}
 `;
 function runPowerShell(script, args) {
   return new Promise((resolve) => {
