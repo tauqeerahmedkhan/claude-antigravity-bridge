@@ -58,6 +58,7 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
     const result = [...fromAg].reverse().find((m) => m.type === "result" && (!taskId || !m.replyTo || m.replyTo === taskId));
     const question = [...fromAg].reverse().find((m) => m.type === "message" && Date.parse(m.ts) >= lastClaudeTs);
     const delivered = fromAg.some((m) => m.type === "progress" && /^📨 Delivered/.test(m.text));
+    const failedDelivery = !delivered && fromAg.some((m) => m.type === "progress" && /^⚠️ Could NOT deliver/.test(m.text));
     const steps = store.stepsSince(since);
     // Antigravity only logs background commands as steps, so also watch its conversation folder.
     const convAct = store.conversationActivity();
@@ -68,7 +69,7 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
     let status;
     if (result) status = "finished";
     else if (question) status = "needs_reply";
-    else if (!delivered && now - since > 180000) status = "not_delivered";
+    else if (failedDelivery || (!delivered && now - since > 180000)) status = "not_delivered";
     else if (lastActivity && now - lastActivity >= idleMs) status = "idle";
     else if (now - callStart >= maxMs) status = "still_running";
 
@@ -87,7 +88,9 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
         next: {
           finished: "Show the user Antigravity's report (in full or a faithful summary), then continue.",
           needs_reply: "Show the user Antigravity's question, answer it with send_message, then wait again.",
-          not_delivered: "The task has not reached Antigravity after 3 minutes (is Antigravity open?). Tell the user. Do NOT resend it automatically: it may still be delivered and would then run twice.",
+          not_delivered: failedDelivery
+            ? "Antigravity's agent panel did not accept the task automatically; the prompt was put on the clipboard in Antigravity. Ask the user to paste it into the agent chat (Ctrl+V), then wait again with this task_id. Do not resend."
+            : "The task has not reached Antigravity after 3 minutes (is Antigravity open?). Tell the user. Do NOT resend it automatically: it may still be delivered and would then run twice.",
           idle: "No sign of Antigravity working for a long time and no report. Ask the user to check Antigravity; do not assume it finished.",
           still_running: `Antigravity is still working. Give the user a one-line update, then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`,
         }[status],

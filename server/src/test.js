@@ -145,6 +145,15 @@ assert.match(got, /Fix B done/);
 const agSees = await call(ag, "read_messages");
 assert.match(agSees, /Next task after the hand-written lines/);
 
+// ---- extension reports it could not deliver -> immediate not_delivered ----
+sent = await call(claude, "send_message", { text: "Undeliverable task", wait_seconds: 0 });
+const idU = sent.match(/task_id: ([\w-]+)/)[1];
+store_post({ from: "antigravity", to: "claude", type: "progress", text: "⚠️ Could NOT deliver this task to the Antigravity agent automatically. It's on the clipboard" });
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: idU, wait_seconds: 10 }));
+console.log("undeliverable   ->", w.status, `| waited ${w.minutes_since_task_sent} min`);
+assert.equal(w.status, "not_delivered");
+assert.match(w.next, /paste it into the agent chat/);
+
 // ---- outbox: agent writes a plain-text report file instead of calling the tool ----
 sent = await call(claude, "send_message", { text: "Phase 8 task", wait_seconds: 0 });
 const id8 = sent.match(/task_id: ([\w-]+)/)[1];

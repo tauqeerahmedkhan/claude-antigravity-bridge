@@ -5,6 +5,10 @@
 **First public release.** Claude Code and Google Antigravity's agent, working as a team.
 
 ### Claude → Antigravity
+- Delivery is confirmed, not assumed: the extension opens the agent panel, waits for it to load, sends,
+  and checks Antigravity's conversation files to confirm the prompt arrived (retrying once). If it
+  can't confirm, the prompt goes on the clipboard and Claude is told it was *not* delivered.
+  (Antigravity 1.107's agent panel silently drops prompts sent before it has finished loading.)
 - Claude shows you the full prompt in the chat, then sends it. It lands in Antigravity's agent chat
   and is submitted automatically (via Antigravity's built-in `antigravity.sendPromptToAgentPanel`),
   with a clipboard fallback if that command isn't available.

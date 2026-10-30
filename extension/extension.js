@@ -16,6 +16,27 @@ const BRAIN_DIRS = process.env.ANTIGRAVITY_BRAIN_DIR
   ? process.env.ANTIGRAVITY_BRAIN_DIR.split(path.delimiter)
   : ["antigravity-ide", "antigravity"].map((d) => path.join(os.homedir(), ".gemini", d, "brain"));
 const UI_CURSOR = path.join(BRIDGE_DIR, "cursor-antigravity-ui.json");
+// Antigravity stores each conversation as conversations/<id>.db next to brain/; the file is
+// written the moment a message is added, which lets us confirm a prompt really arrived.
+const CONV_DIRS = process.env.ANTIGRAVITY_CONV_DIR
+  ? process.env.ANTIGRAVITY_CONV_DIR.split(path.delimiter)
+  : BRAIN_DIRS.map((b) => path.join(path.dirname(b), "conversations"));
+function conversationStamp() {
+  let newest = 0, count = 0;
+  for (const d of CONV_DIRS) {
+    let names = [];
+    try { names = fs.readdirSync(d); } catch { continue; }
+    for (const n of names) {
+      if (n.startsWith(".")) continue;
+      try { const t = fs.statSync(path.join(d, n)).mtimeMs; count++; if (t > newest) newest = t; } catch {}
+    }
+  }
+  return { newest, count };
+}
+function diag(line) {
+  try { fs.appendFileSync(path.join(BRIDGE_DIR, "server.log"), `${new Date().toISOString()} [ext ${process.pid}] ${line}\n`); } catch {}
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ME = "antigravity";
 
 // ---------- bus (same file format as bridge-mcp/store.js) ----------
@@ -256,20 +277,36 @@ function activate(context) {
       const short = text.length > 80 ? text.slice(0, 77) + "…" : text;
       let delivered = false;
       if (await hasSendCommand()) {
-        try {
-          await vscode.commands.executeCommand(SEND_CMD, prompt);
-          delivered = true;
-        } catch (e) {
-          log(`auto-send failed: ${e?.message || e}`);
+        // The agent panel only receives the message if it is open and mounted, so open it,
+        // give it time to load, send, and confirm by watching the conversation files.
+        // Second attempt waits longer for a slow panel.
+        for (const [attempt, settleMs] of [[1, 1200], [2, 3500]]) {
+          const before = conversationStamp();
+          try { await vscode.commands.executeCommand("antigravity.toggleChatFocus"); } catch (e) { diag(`toggleChatFocus failed: ${e?.message || e}`); }
+          await sleep(settleMs);
+          try {
+            await vscode.commands.executeCommand(SEND_CMD, prompt);
+          } catch (e) {
+            diag(`send attempt ${attempt} threw: ${e?.message || e}`);
+            continue;
+          }
+          for (let i = 0; i < 20 && !delivered; i++) {
+            await sleep(500);
+            const now = conversationStamp();
+            if (now.newest > before.newest || now.count > before.count) delivered = true;
+          }
+          diag(`send attempt ${attempt} for task ${taskId}: ${delivered ? "confirmed" : "not confirmed"}`);
+          if (delivered) break;
         }
       }
       if (delivered) {
         log(`→ agent: ${short}`);
-        post(`📨 Delivered to the Antigravity agent: "${short}"`, "progress");
+        post(`📨 Delivered to the Antigravity agent (confirmed): "${short}"`, "progress");
         if (cfg().get("notifications", true)) {
           vscode.window.setStatusBarMessage(`$(comment-discussion) Sent Claude's message to the agent`, 5000);
         }
       } else {
+        post(`⚠️ Could NOT deliver this task to the Antigravity agent automatically. It's on the clipboard in Antigravity; ask the user to paste it into the agent chat (Ctrl+V): "${short}"`, "progress");
         await vscode.env.clipboard.writeText(prompt);
         unreadCount++;
         renderBar();

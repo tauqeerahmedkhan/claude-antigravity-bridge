@@ -187,6 +187,7 @@ a future update, set the `ANTIGRAVITY_BRAIN_DIR` environment variable to the new
 | Claude sees old Antigravity data | Check `lastActivity` in `get_antigravity_progress`; if it's stale, run `Install.bat` again to update the bridge |
 | Agent's edits wait for you to click **Save** | Auto-save is off. Run `Install.bat` again, or in Antigravity set **File → Auto Save** on. The installer leaves your own auto-save choice alone if you'd already picked one |
 | "Antigravity didn't close" | Save your files, close Antigravity, run `Install.bat` again |
+| Claude says "Could NOT deliver" | Antigravity's agent panel didn't accept the prompt. It's on your clipboard in Antigravity: click into the agent chat, press `Ctrl+V` and Enter. `~/.agent-bridge/server.log` shows each delivery attempt |
 | Claude's message didn't appear in the agent chat | Run *Agent Bridge: Show log* in Antigravity. If it says auto-send is unavailable, your Antigravity version doesn't have the send command; paste from the clipboard instead |
 | Extension not showing in Antigravity | Restart Antigravity. Manual fallback: build the `.vsix` (below), then Extensions → `…` → **Install from VSIX** |
 | Something else | Run `Install.bat --dry-run` and [open an issue](https://github.com/tauqeerahmedkhan/claude-antigravity-bridge/issues) with the output |
