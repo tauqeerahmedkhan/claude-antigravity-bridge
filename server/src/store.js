@@ -71,7 +71,7 @@ export function ingestOutbox() {
   try { names = fs.readdirSync(OUTBOX_DIR); } catch { return 0; }
   let n = 0;
   for (const name of names) {
-    if (!/\.(md|txt)$/i.test(name)) continue;
+    if (!/\.(md|txt)$/i.test(name) || /\.progress\.(md|txt)$/i.test(name)) continue; // progress notes aren't reports
     const src = path.join(OUTBOX_DIR, name);
     // skip files modified in the last 2 s: the agent may still be writing
     try { if (Date.now() - fs.statSync(src).mtimeMs < 2000) continue; } catch { continue; }

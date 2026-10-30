@@ -60,6 +60,7 @@ function claudeChatTitle() {
 // Claude polls with repeated calls. All state is derived from the log, so nothing is lost
 // between calls (or if the prompt hook already showed a message).
 const MAX_WAIT_S = 55;
+const progressSeen = new Map(); // taskId -> ts of last progress note already returned to Claude
 
 async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
   const callStart = Date.now();
@@ -94,12 +95,18 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
 
     if (status) {
       store.unread(ME); // mark everything seen so the prompt hook doesn't repeat it
+      const key = taskId || "*";
+      const seenTs = progressSeen.get(key) || "";
+      const notes = fromAg.filter((m) => m.type === "progress" && m.text.startsWith("📝") &&
+        (!taskId || !m.meta?.taskId || m.meta.taskId === taskId) && m.ts > seenTs);
+      if (notes.length) progressSeen.set(key, notes.at(-1).ts);
       return {
         status,
         task_id: taskId,
         minutes_since_task_sent: Math.round((now - since) / 6000) / 10,
         ...(result ? { antigravity_report: result.text } : {}),
         ...(question ? { antigravity_question: question.text } : {}),
+        ...(notes.length ? { agent_progress_notes: notes.slice(-8).map((m) => `${m.ts.slice(11, 19)} ${m.text.replace(/^📝\s*/, "")}`) } : {}),
         steps_so_far: steps.length,
         failed_steps: steps.filter((s) => s.exitCode !== undefined && s.exitCode !== 0).length,
         latest_steps: steps.slice(-8).map((s) =>
@@ -111,7 +118,7 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
             ? "Antigravity's agent panel did not accept the task automatically; the prompt was put on the clipboard in Antigravity. Ask the user to paste it into the agent chat (Ctrl+V), then wait again with this task_id. Do not resend."
             : "The task has not reached Antigravity after 3 minutes (is Antigravity open?). Tell the user. Do NOT resend it automatically: it may still be delivered and would then run twice.",
           idle: "No sign of Antigravity working for a long time and no report. Ask the user to check Antigravity; do not assume it finished.",
-          still_running: `Antigravity is still working. Give the user a one-line update, then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`,
+          still_running: `Antigravity is still working. Give the user a one-line update (use the newest agent_progress_notes if any, else the latest steps), then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`,
         }[status],
       };
     }

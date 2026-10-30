@@ -23,6 +23,10 @@
 - Duplicate tasks sent within 5 minutes are skipped, so a task never runs twice.
 
 ### Antigravity → Claude
+- **Progress notes while it works:** every task names a progress file
+  (`~/.agent-bridge/outbox/<TaskID>.progress.md`); the agent adds a short line at each milestone,
+  the extension forwards each line to Claude right away (📝), and every time Claude checks in it
+  shows you the new notes, so you're not left waiting in silence.
 - **Wakes Claude when the report is ready (Windows):** if Claude hasn't picked up Antigravity's
   report (or question) within ~25 s, the extension pastes a short note into the *same* Claude
   desktop chat and sends it, so Claude continues on its own. It only does this if that chat is

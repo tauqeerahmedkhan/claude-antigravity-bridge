@@ -83,6 +83,10 @@ whatever failed."* Claude will:
    minute), with a one-line update each round.
 4. **Show you Antigravity's report** (what it did, files changed, test results) and carry on.
 
+**While Antigravity works,** it adds a one-line note to the task's progress file at each milestone
+(e.g. *"Table done, now Save as Default"*). Each note reaches Claude immediately, and every time
+Claude checks in (about every 45 s) it gives you the latest one.
+
 **When Claude isn't waiting** (it finished its turn), the bridge wakes it on Windows: about 25 s
 after Antigravity's report arrives, it pastes a short note into the same Claude chat and sends it,
 and Claude picks up the report and carries on. It only types if that chat is open, Claude isn't

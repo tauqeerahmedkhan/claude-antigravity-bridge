@@ -64,7 +64,7 @@ function ingestOutbox() {
   }
   let n = 0;
   for (const name of names) {
-    if (!/\.(md|txt)$/i.test(name)) continue;
+    if (!/\.(md|txt)$/i.test(name) || /\.progress\.(md|txt)$/i.test(name)) continue;
     const src = path.join(OUTBOX_DIR, name);
     try {
       if (Date.now() - fs.statSync(src).mtimeMs < 2e3) continue;

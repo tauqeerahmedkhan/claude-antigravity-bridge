@@ -468,6 +468,7 @@ function activate(context) {
   // Every task ends with a firm report-back requirement so Claude always gets a result.
   function buildPrompt(text, taskId) {
     const reportFile = path.join(BRIDGE_DIR, "outbox", `${taskId || "report-" + Date.now()}.md`);
+    const progressFile = reportFile.replace(/\.md$/, ".progress.md");
     try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); } catch {}
     return [
       "[Task from Claude Code via agent-bridge]" + (taskId ? `  Task ID: ${taskId}` : ""),
@@ -475,6 +476,10 @@ function activate(context) {
       text,
       "",
       "---",
+      "WHILE YOU WORK: Claude Code is waiting on you. At each milestone (and at least every few minutes),",
+      "append ONE short line to this progress file (create it if needed), e.g. \"Backend endpoint done, writing tests\":",
+      `  ${progressFile}`,
+      "",
       "REQUIRED when you finish (or if you get blocked or need a decision): write your report as a",
       "plain text / markdown file at exactly this path (create it with your file tool or a command):",
       `  ${reportFile}`,
@@ -611,12 +616,41 @@ function activate(context) {
   try { fs.mkdirSync(OUTBOX, { recursive: true }); } catch {}
   try {
     const ow = fs.watch(OUTBOX, (_e, name) => {
-      if (name && /\.(md|txt)$/i.test(String(name)) && fs.existsSync(path.join(OUTBOX, String(name)))) {
-        reportSeen(`Report: ${name}`, String(name).replace(/\.(md|txt)$/i, ""));
+      if (!name) return;
+      name = String(name);
+      if (/\.progress\.(md|txt)$/i.test(name)) { onProgressFile(name); return; }
+      if (/\.(md|txt)$/i.test(name) && fs.existsSync(path.join(OUTBOX, name))) {
+        reportSeen(`Report: ${name}`, name.replace(/\.(md|txt)$/i, ""));
       }
     });
     context.subscriptions.push({ dispose: () => ow.close() });
   } catch (e) { log(`outbox watch failed: ${e.message}`); }
+  // Agent's running progress notes: forward each new line to Claude as it's written.
+  const progressOffsets = new Map(); // file -> bytes already forwarded
+  const progressTimers = new Map();
+  function onProgressFile(name) {
+    clearTimeout(progressTimers.get(name));
+    progressTimers.set(name, setTimeout(() => {
+      const file = path.join(OUTBOX, name);
+      let buf;
+      try { buf = fs.readFileSync(file); } catch { return; }
+      const from = progressOffsets.get(name) ?? 0;
+      if (buf.length <= from) { if (buf.length < from) progressOffsets.set(name, 0); return; }
+      progressOffsets.set(name, buf.length);
+      const lines = buf.slice(from).toString("utf8").split(/\r?\n/).map((l) => l.trim().replace(/^[-*]\s+/, "")).filter(Boolean);
+      const taskId = name.replace(/\.progress\.(md|txt)$/i, "");
+      for (const line of lines.slice(-5)) {
+        const t = line.length > 300 ? line.slice(0, 297) + "…" : line;
+        post(`📝 ${t}`, "progress", { taskId, via: "progress-file" });
+        log(`→ Claude (progress): ${t}`);
+      }
+      if (lines.length) {
+        lastAgentActivity = Date.now();
+        if (state === "working" || state === "idle") setState("working", `Latest: ${lines.at(-1).slice(0, 120)}`);
+      }
+    }, 700));
+  }
+
   let scanned = readAll().length;
   function scanAgentPosts() {
     const msgs = readAll();

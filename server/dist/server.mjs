@@ -21559,7 +21559,7 @@ function ingestOutbox() {
   }
   let n = 0;
   for (const name of names) {
-    if (!/\.(md|txt)$/i.test(name)) continue;
+    if (!/\.(md|txt)$/i.test(name) || /\.progress\.(md|txt)$/i.test(name)) continue;
     const src = path.join(OUTBOX_DIR, name);
     try {
       if (Date.now() - fs.statSync(src).mtimeMs < 2e3) continue;
@@ -21922,6 +21922,7 @@ function claudeChatTitle() {
   ));
 }
 var MAX_WAIT_S = 55;
+var progressSeen = /* @__PURE__ */ new Map();
 async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
   const callStart = Date.now();
   const maxMs = Math.min(waitSeconds ?? 45, MAX_WAIT_S) * 1e3;
@@ -21956,12 +21957,17 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
     else if (now - callStart >= maxMs) status = "still_running";
     if (status) {
       unread(ME);
+      const key = taskId || "*";
+      const seenTs = progressSeen.get(key) || "";
+      const notes = fromAg.filter((m) => m.type === "progress" && m.text.startsWith("\u{1F4DD}") && (!taskId || !m.meta?.taskId || m.meta.taskId === taskId) && m.ts > seenTs);
+      if (notes.length) progressSeen.set(key, notes.at(-1).ts);
       return {
         status,
         task_id: taskId,
         minutes_since_task_sent: Math.round((now - since) / 6e3) / 10,
         ...result ? { antigravity_report: result.text } : {},
         ...question ? { antigravity_question: question.text } : {},
+        ...notes.length ? { agent_progress_notes: notes.slice(-8).map((m) => `${m.ts.slice(11, 19)} ${m.text.replace(/^📝\s*/, "")}`) } : {},
         steps_so_far: steps.length,
         failed_steps: steps.filter((s) => s.exitCode !== void 0 && s.exitCode !== 0).length,
         latest_steps: steps.slice(-8).map((s) => `${s.ts.slice(11, 19)} ${s.title}${s.exitCode !== void 0 ? s.exitCode === 0 ? " \u2713" : ` \u2717 (exit ${s.exitCode})` : ""}`),
@@ -21970,7 +21976,7 @@ async function waitForTask({ taskId, waitSeconds, idleSeconds, extra }) {
           needs_reply: "Show the user Antigravity's question, answer it with send_message, then wait again.",
           not_delivered: failedDelivery ? "Antigravity's agent panel did not accept the task automatically; the prompt was put on the clipboard in Antigravity. Ask the user to paste it into the agent chat (Ctrl+V), then wait again with this task_id. Do not resend." : "The task has not reached Antigravity after 3 minutes (is Antigravity open?). Tell the user. Do NOT resend it automatically: it may still be delivered and would then run twice.",
           idle: "No sign of Antigravity working for a long time and no report. Ask the user to check Antigravity; do not assume it finished.",
-          still_running: `Antigravity is still working. Give the user a one-line update, then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`
+          still_running: `Antigravity is still working. Give the user a one-line update (use the newest agent_progress_notes if any, else the latest steps), then call wait_for_antigravity again with task_id ${taskId ?? "(none)"}. Keep doing this until the status changes.`
         }[status]
       };
     }

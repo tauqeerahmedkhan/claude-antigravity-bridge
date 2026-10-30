@@ -154,6 +154,26 @@ console.log("undeliverable   ->", w.status, `| waited ${w.minutes_since_task_sen
 assert.equal(w.status, "not_delivered");
 assert.match(w.next, /paste it into the agent chat/);
 
+// ---- progress notes: shown to Claude on each wait round, each note only once ----
+sent = await call(claude, "send_message", { text: "Long redesign", wait_seconds: 0 });
+const idP = sent.match(/task_id: ([\w-]+)/)[1];
+deliver("p");
+store_post({ from: "antigravity", to: "claude", type: "progress", text: "📝 Read the templates page, planning table layout", meta: { taskId: idP } });
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: idP, wait_seconds: 5 }));
+console.log("progress #1     ->", w.status, w.agent_progress_notes);
+assert.equal(w.status, "still_running");
+assert.equal(w.agent_progress_notes.length, 1);
+store_post({ from: "antigravity", to: "claude", type: "progress", text: "📝 Table done, now Save as Default", meta: { taskId: idP } });
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: idP, wait_seconds: 5 }));
+console.log("progress #2     ->", w.status, w.agent_progress_notes);
+assert.deepEqual(w.agent_progress_notes.map((n) => n.slice(9)), ["Table done, now Save as Default"]);
+// a progress file in the outbox is NOT mistaken for the final report
+fs.mkdirSync(path.join(sandbox, "bus", "outbox"), { recursive: true });
+fs.writeFileSync(path.join(sandbox, "bus", "outbox", `${idP}.progress.md`), "note\n");
+await new Promise((r) => setTimeout(r, 2200));
+w = JSON.parse(await call(claude, "wait_for_antigravity", { task_id: idP, wait_seconds: 5 }));
+assert.equal(w.status, "still_running");
+
 // ---- outbox: agent writes a plain-text report file instead of calling the tool ----
 sent = await call(claude, "send_message", { text: "Phase 8 task", wait_seconds: 0 });
 const id8 = sent.match(/task_id: ([\w-]+)/)[1];
