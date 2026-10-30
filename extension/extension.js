@@ -170,10 +170,61 @@ function activate(context) {
   bar.command = "agentBridge.sendToClaude";
   let unreadCount = 0;
   let lastClaude = null;
-  const renderBar = () => {
-    bar.text = unreadCount ? `$(comment-discussion) Claude: ${unreadCount}` : "$(radio-tower) Bridge";
-    bar.tooltip = unreadCount ? `Last from Claude: ${lastClaude?.text}\nClick to reply` : "Agent Bridge: click to message Claude";
+
+  // ----- live status: receiving ⬇ (blue, blinking) → working ⟳ (amber, spinning)
+  //       → reporting ⬆ (green, blinking) → ✓ reported; ⚠ red if delivery failed -----
+  const STATES = {
+    idle:      { icon: "$(radio-tower)", label: "Bridge" },
+    receiving: { icon: "$(arrow-down)",  label: "Receiving task from Claude", color: "#3794ff", blink: true },
+    working:   { icon: "$(sync~spin)",   label: "Agent working",              color: "#e2b93d" },
+    sending:   { icon: "$(arrow-up)",    label: "Reporting to Claude",        color: "#73c991", blink: true },
+    done:      { icon: "$(check)",       label: "Reported to Claude",         color: "#73c991" },
+    failed:    { icon: "$(warning)",     label: "Task not delivered",         color: "#f14c4c" },
   };
+  let state = "idle", stateDetail = "", stateSince = Date.now(), blinkOn = true;
+  let blinkTimer = null, stateTimer = null, lastAgentActivity = 0, activeTask = null;
+  const ago = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 60 ? `${s}s` : `${Math.round(s / 60)} min`; };
+  function setState(name, detail = "", holdMs = 0, next = "idle") {
+    state = name; stateDetail = detail; stateSince = Date.now(); blinkOn = true;
+    clearInterval(blinkTimer); blinkTimer = null;
+    clearTimeout(stateTimer); stateTimer = null;
+    if (STATES[name].blink) blinkTimer = setInterval(() => { blinkOn = !blinkOn; renderBar(); }, 550);
+    if (holdMs) stateTimer = setTimeout(() => setState(next), holdMs);
+    renderBar();
+  }
+  const renderBar = () => {
+    const st = STATES[state];
+    if (state === "idle" && unreadCount) {
+      bar.color = undefined;
+      bar.text = `$(comment-discussion) Claude: ${unreadCount}`;
+      bar.tooltip = `Last from Claude: ${lastClaude?.text}\nClick to reply`;
+      return;
+    }
+    const icon = st.blink && !blinkOn ? "$(blank)" : st.icon;
+    bar.color = st.color;
+    bar.text = `${icon} ${st.label}`;
+    bar.tooltip = state === "idle"
+      ? "Agent Bridge: click to message Claude"
+      : `${st.label} (${ago(stateSince)})${stateDetail ? `\n${stateDetail}` : ""}\nClick to message Claude`;
+  };
+  // working watchdog: stop spinning if the agent has gone silent for a long time
+  const watchdog = setInterval(() => {
+    if (state === "working") {
+      renderBar(); // refresh elapsed time in tooltip
+      const quietFor = Date.now() - Math.max(lastAgentActivity, stateSince);
+      if (quietFor > (activeTask ? 60 : 10) * 60000) { activeTask = null; setState("idle"); }
+    }
+  }, 15000);
+  context.subscriptions.push({ dispose: () => { clearInterval(watchdog); clearInterval(blinkTimer); clearTimeout(stateTimer); } });
+  function agentActivity() {
+    lastAgentActivity = Date.now();
+    if (state === "idle" || state === "done") setState("working", "Antigravity agent is running steps");
+  }
+  function reportSeen(what) {
+    activeTask = null;
+    setState("sending", what, 5000, "done");
+    setTimeout(() => { if (state === "done") setState("done", what, 8000); }, 5100);
+  }
   renderBar();
   bar.show();
   context.subscriptions.push(bar);
@@ -237,10 +288,12 @@ function activate(context) {
     const msg = `🔧 ${title}${exit ? (exit[1] === "0" ? " ✓" : ` ✗ (exit ${exit[1]})`) : ""}`;
     post(msg, "progress", { conversationId: conv, command: args.CommandLine });
     log(`→ Claude: ${msg}`);
+    agentActivity();
   }
   const isStep = (f) => /[\\/]\.system_generated[\\/]messages[\\/][^\\/]+\.json$/.test(f) && !f.endsWith("read.json");
 
   function onArtifact(file) {
+    if (activeTask || state === "working") lastAgentActivity = Date.now(); // any agent file change counts
     if (isStep(file)) {
       clearTimeout(timers.get(file));
       timers.set(file, setTimeout(() => reportStep(file), 500));
@@ -340,6 +393,7 @@ function activate(context) {
       const { text, taskId } = queue.shift();
       const prompt = buildPrompt(text, taskId);
       const short = text.length > 80 ? text.slice(0, 77) + "…" : text;
+      setState("receiving", short);
       let delivered = false;
       if (await hasSendCommand()) {
         // The agent panel only receives the message if it is open and mounted, so open it,
@@ -392,6 +446,8 @@ function activate(context) {
       if (delivered) {
         log(`→ agent: ${short}`);
         post(`📨 Delivered to the Antigravity agent (confirmed): "${short}"`, "progress");
+        activeTask = taskId; lastAgentActivity = Date.now();
+        setState("working", short);
         if (cfg().get("notifications", true)) {
           vscode.window.setStatusBarMessage(`$(comment-discussion) Sent Claude's message to the agent`, 5000);
         }
@@ -399,7 +455,7 @@ function activate(context) {
         post(`⚠️ Could NOT deliver this task to the Antigravity agent automatically. It's on the clipboard in Antigravity; ask the user to paste it into the agent chat (Ctrl+V): "${short}"`, "progress");
         await vscode.env.clipboard.writeText(prompt);
         unreadCount++;
-        renderBar();
+        setState("failed", `${short}\nOn your clipboard: paste into the agent chat (Ctrl+V)`, 60000);
         vscode.window.showWarningMessage(
           `Couldn't send Claude's message to the agent automatically, so it's on your clipboard — paste it into the agent chat (Ctrl+V). "${short}"`,
           "Open agent chat"
@@ -439,8 +495,28 @@ function activate(context) {
     if (fresh.length) renderBar();
   }
   fs.mkdirSync(BRIDGE_DIR, { recursive: true });
+  // Agent writing its report file -> "Reporting to Claude"
+  const OUTBOX = path.join(BRIDGE_DIR, "outbox");
+  try { fs.mkdirSync(OUTBOX, { recursive: true }); } catch {}
+  try {
+    const ow = fs.watch(OUTBOX, (_e, name) => {
+      if (name && /\.(md|txt)$/i.test(String(name)) && fs.existsSync(path.join(OUTBOX, String(name)))) reportSeen(`Report: ${name}`);
+    });
+    context.subscriptions.push({ dispose: () => ow.close() });
+  } catch (e) { log(`outbox watch failed: ${e.message}`); }
+  let scanned = readAll().length;
+  function scanAgentPosts() {
+    const msgs = readAll();
+    if (scanned > msgs.length) scanned = 0;
+    for (const m of msgs.slice(scanned)) {
+      if (m.from === ME && (m.type === "result" || (m.type === "message" && !/^[🔧📨⚠⏭📝]/u.test(m.text)))) {
+        reportSeen(m.text.slice(0, 80));
+      }
+    }
+    scanned = msgs.length;
+  }
   if (!fs.existsSync(LOG_FILE)) fs.writeFileSync(LOG_FILE, "");
-  fs.watchFile(LOG_FILE, { interval: 1000 }, checkInbox);
+  fs.watchFile(LOG_FILE, { interval: 1000 }, () => { checkInbox(); scanAgentPosts(); });
   context.subscriptions.push({ dispose: () => fs.unwatchFile(LOG_FILE) });
 
   // ----- commands -----

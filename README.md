@@ -139,7 +139,9 @@ reports; `reply_to` defaults to Claude's latest task) and `read_messages`.
   time, in order.
 - if that command isn't available (e.g. a future Antigravity version renames it), it puts the
   message on your clipboard and tells you to paste it with `Ctrl+V`
-- adds a status-bar item: click it to message Claude
+- shows live status in the status bar: **⬇ blue (blinking)** receiving a task → **⟳ amber (spinning)**
+  agent working → **⬆ green (blinking)** reporting to Claude → **✓** reported; **⚠ red** if a task
+  couldn't be delivered. Hover for details; click to message Claude
 - adds commands (`Ctrl+Shift+P`): *Agent Bridge: Send message to Claude Code*, *Send last Claude message to the agent*, *Copy last Claude message*, *Show log*, *Ping Claude Code*
 
 **Extension settings** (Antigravity → Settings → search "Agent Bridge"):

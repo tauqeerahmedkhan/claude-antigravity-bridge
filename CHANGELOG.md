@@ -14,6 +14,9 @@
   Automation (verified before anything is typed), pastes the prompt and clicks "Send message".
   Setting: `agentBridge.keyboardDelivery`.
 - Opening the agent chat no longer closes the panel when it's already open.
+- Live status in Antigravity's status bar: ⬇ blue blinking while a task is being received, ⟳ amber
+  spinning while the agent works, ⬆ green blinking while it reports back, then ✓; ⚠ red if a task
+  couldn't be delivered. Hover for details and elapsed time.
 - Claude shows you the full prompt in the chat, then sends it. It lands in Antigravity's agent chat
   and is submitted automatically (via Antigravity's built-in `antigravity.sendPromptToAgentPanel`),
   with a clipboard fallback if that command isn't available.
