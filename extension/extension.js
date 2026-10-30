@@ -69,7 +69,13 @@ if ([AbW]::IsIconic($h)) { [AbW]::ShowWindow($h, 9) | Out-Null }
 Start-Sleep -Milliseconds 400
 $root = $A::FromHandle($h)
 $byName = { param($n) $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $n))) }
-$box = & $byName 'Message input'
+# Chromium builds its accessibility tree lazily, so the box may not be visible to UI Automation on
+# the first look (e.g. right after a reload). Keep looking for a few seconds.
+$box = $null
+for ($i = 0; $i -lt 10 -and -not $box; $i++) {
+  $box = & $byName 'Message input'
+  if (-not $box) { Start-Sleep -Milliseconds 600; $root = $A::FromHandle($h); $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | Out-Null }
+}
 if (-not $box) { 'NOINPUT'; exit }
 try { $box.SetFocus() } catch { "FOCUSERROR:$($_.Exception.Message)"; exit }
 Start-Sleep -Milliseconds 300
@@ -114,12 +120,20 @@ if (-not $p) { 'NOCLAUDE'; exit }
 $h = $p.MainWindowHandle
 $root = $A::FromHandle($h)
 $docCond = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Document)
-$current = ($root.FindAll($TS, $docCond) | Where-Object { $_.Current.Name -like '* - Claude*' } | Select-Object -First 1).Current.Name
+$current = $null
+for ($i = 0; $i -lt 10 -and -not $current; $i++) {
+  $current = ($root.FindAll($TS, $docCond) | Where-Object { $_.Current.Name -like '* - Claude*' } | Select-Object -First 1).Current.Name
+  if (-not $current) { Start-Sleep -Milliseconds 600; $root = $A::FromHandle($h) }
+}
 if ($current -ne $Title) { "WRONGCHAT:$current"; exit }
 $btnCond = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
 $busy = $root.FindAll($TS, $btnCond) | Where-Object { $_.Current.Name -match '^(Stop|Interrupt|Cancel response)' } | Select-Object -First 1
 if ($busy) { 'BUSY'; exit }
-$box = $root.FindFirst($TS, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Prompt')))
+$box = $null
+for ($i = 0; $i -lt 10 -and -not $box; $i++) {
+  $box = $root.FindFirst($TS, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Prompt')))
+  if (-not $box) { Start-Sleep -Milliseconds 600; $root = $A::FromHandle($h) }
+}
 if (-not $box) { 'NOPROMPT'; exit }
 $tp = $null
 if ($box.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$tp)) {
